@@ -2,6 +2,7 @@ import time
 import pandas as pd
 
 import torch
+from torch.nn.functional import embedding
 from transformers import BertTokenizer
 import torch.nn as nn
 from torch.utils.data.dataloader import DataLoader
@@ -9,10 +10,10 @@ from sklearn.metrics import f1_score, accuracy_score
 from tqdm import tqdm, trange
 
 import modeling
-from data import load_dataset, tokenized_sentence
+from data import load_dataset, punctuation, tokenized_sentence
 
 
-def main():
+def main(max_seq, embedding_dim, kernel):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'device = {device}')
     
@@ -21,6 +22,7 @@ def main():
     df = pd.read_csv('curse.csv', index_col=0)
     
     labels = df['label']
+    df = punctuation(df)
     df = tokenized_sentence(tokenizer, df)
     
     dataset = load_dataset(df, labels)
@@ -29,9 +31,9 @@ def main():
     vocab_size = tokenizer.vocab_size + len(tokenizer.get_added_vocab())
     model = modeling.Model(
         vocab_size=vocab_size, 
-        max_seq=200, 
-        embedding_dim=128, 
-        kernel=256, 
+        max_seq=max_seq, 
+        embedding_dim=embedding_dim, 
+        kernel=kernel, 
         num_class=2)
     model.to(device)
     model.train()
@@ -62,7 +64,7 @@ def main():
     torch.save(model.state_dict(), './save/result.pt')
 
 
-def eval():
+def eval(max_seq, embedding_dim, kernel):
 
     device = torch.device('cpu')
     print(f'device = {device}')
@@ -80,9 +82,9 @@ def eval():
     vocab_size = tokenizer.vocab_size + len(tokenizer.get_added_vocab())
     model = modeling.Model(
         vocab_size=vocab_size, 
-        max_seq=200, 
-        embedding_dim=128, 
-        kernel=256, 
+        max_seq=max_seq, 
+        embedding_dim=embedding_dim, 
+        kernel=kernel, 
         num_class=2)
     model.load_state_dict(torch.load('./save/result.pt'))
     model.to(device)
@@ -108,5 +110,8 @@ def eval():
 
 
 if __name__ == "__main__":
-    main()
-    eval()
+    max_seq = 200
+    embedding_dim = 256
+    kernel = 256
+    main(max_seq, embedding_dim, kernel)
+    eval(max_seq, embedding_dim, kernel)
