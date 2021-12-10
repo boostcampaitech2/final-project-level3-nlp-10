@@ -2,23 +2,17 @@ import time
 import pandas as pd
 
 import torch
-from torch.nn.functional import embedding
 from transformers import BertTokenizer
 import torch.nn as nn
 from torch.utils.data.dataloader import DataLoader
 from sklearn.metrics import f1_score, accuracy_score
-from tqdm import tqdm, trange
+from tqdm import tqdm
 
 import modeling
 from data import load_dataset, punctuation, tokenized_sentence
 
 
-def main(max_seq, embedding_dim, kernel):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f'device = {device}')
-    
-    tokenizer = BertTokenizer.from_pretrained('emeraldgoose/bad-korean-tokenizer')
-
+def main(tokenizer, max_seq, embedding_dim, channel, device):    
     df = pd.read_csv('curse.csv', index_col=0)
     
     labels = df['label']
@@ -33,8 +27,9 @@ def main(max_seq, embedding_dim, kernel):
         vocab_size=vocab_size, 
         max_seq=max_seq, 
         embedding_dim=embedding_dim, 
-        kernel=kernel, 
-        num_class=2)
+        channel=channel, 
+        num_class=2,
+        device=device)
     model.to(device)
     model.train()
     
@@ -64,13 +59,7 @@ def main(max_seq, embedding_dim, kernel):
     torch.save(model.state_dict(), './save/result.pt')
 
 
-def eval(max_seq, embedding_dim, kernel):
-
-    device = torch.device('cpu')
-    print(f'device = {device}')
-    
-    tokenizer = BertTokenizer.from_pretrained('emeraldgoose/bad-korean-tokenizer')
-
+def evaluation(tokenizer, max_seq, embedding_dim, channel, device):
     df = pd.read_csv('validation.csv')
     
     labels = df['label']
@@ -84,8 +73,9 @@ def eval(max_seq, embedding_dim, kernel):
         vocab_size=vocab_size, 
         max_seq=max_seq, 
         embedding_dim=embedding_dim, 
-        kernel=kernel, 
-        num_class=2)
+        channel=channel, 
+        num_class=2,
+        device=device)
     model.load_state_dict(torch.load('./save/result.pt'))
     model.to(device)
 
@@ -110,8 +100,17 @@ def eval(max_seq, embedding_dim, kernel):
 
 
 if __name__ == "__main__":
+    # config
     max_seq = 200
     embedding_dim = 256
-    kernel = 256
-    main(max_seq, embedding_dim, kernel)
-    eval(max_seq, embedding_dim, kernel)
+    channel = 512
+    
+    # device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f'device = {device}')
+    
+    # load tokenizer
+    tokenizer = BertTokenizer.from_pretrained('emeraldgoose/bad-korean-tokenizer')
+    
+    main(tokenizer, max_seq, embedding_dim, channel, device)
+    evaluation(tokenizer, max_seq, embedding_dim, channel, device)

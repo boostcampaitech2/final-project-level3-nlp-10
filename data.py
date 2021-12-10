@@ -51,5 +51,6 @@ def tokenized_sentence(tokenizer, dataset):
         padding='max_length',
         truncation=True,
         max_length=200,
+        return_token_type_ids=False
     )
     return tokenized

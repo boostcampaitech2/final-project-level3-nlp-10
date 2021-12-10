@@ -13,7 +13,7 @@ def main(cfg, text):
     tokenizer = BertTokenizer.from_pretrained('emeraldgoose/bad-korean-tokenizer')
     vocab_size = tokenizer.vocab_size + len(tokenizer.get_added_vocab())
     
-    model = modeling.Model(vocab_size=vocab_size, max_seq=cfg['max_seq'], embedding_dim=cfg['embedding_dim'], kernel=cfg['kernel'], num_class=2)
+    model = modeling.Model(vocab_size=vocab_size, max_seq=cfg['max_seq'], embedding_dim=cfg['embedding_dim'], channel=cfg['channel'], num_class=2)
     model.to(device)
     
     input = tokenizer(
@@ -33,6 +33,6 @@ def main(cfg, text):
 
 
 if __name__ == "__main__":
-    cfg = dict(max_seq=200, embedding_dim=128, kernel=256)
+    cfg = dict(max_seq=200, embedding_dim=128, channel=256)
     text = '안녕하세요'
     main(cfg, text)
