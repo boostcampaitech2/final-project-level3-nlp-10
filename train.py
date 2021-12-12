@@ -1,4 +1,5 @@
 import time
+import random
 import pandas as pd
 
 import torch
@@ -6,13 +7,25 @@ from transformers import BertTokenizer
 import torch.nn as nn
 from torch.utils.data.dataloader import DataLoader
 from sklearn.metrics import f1_score, accuracy_score
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 import modeling
 from data import load_dataset, punctuation, tokenized_sentence
 
+import wandb
 
-def main(tokenizer, max_seq, embedding_dim, channel, device):    
+random.seed(42)
+
+defaults = dict(learning_rate=0.03, epochs=50, embedding_dim=256, channel=512)
+wandb.init(config=defaults, project='final_project')
+config = wandb.config
+
+def main():
+    print(f'config : embedding_dim = {config.embedding_dim}, channe; = {config.channel}')
+    
+    # load tokenizer
+    tokenizer = BertTokenizer.from_pretrained('emeraldgoose/bad-korean-tokenizer')
+
     df = pd.read_csv('curse.csv', index_col=0)
     
     labels = df['label']
@@ -25,41 +38,50 @@ def main(tokenizer, max_seq, embedding_dim, channel, device):
     vocab_size = tokenizer.vocab_size + len(tokenizer.get_added_vocab())
     model = modeling.Model(
         vocab_size=vocab_size, 
-        max_seq=max_seq, 
-        embedding_dim=embedding_dim, 
-        channel=channel, 
+        max_seq=200, 
+        embedding_dim=config.embedding_dim, 
+        channel=config.channel, 
         num_class=2,
         device=device)
     model.to(device)
     model.train()
+    wandb.watch(model)
     
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    scaler = torch.cuda.amp.GradScaler()
 
-    epochs = 50
-    
-    for epoch in range(epochs):
-        total_loss = 0
-        for (i, batch) in tqdm(enumerate(dataloader)):
+    epochs = config.epochs
+    total_loss = 0
+    for epoch in trange(epochs):
+        for (i, batch) in enumerate(dataloader):
             input = batch['input_ids'].to(device)
             label = batch['label'].to(device)
 
             optimizer.zero_grad()
-            output = model(input)
+            with torch.cuda.amp.autocast():
+                output = model(input)
 
             loss = criterion(output, label)
-            loss.backward()
-            optimizer.step()
+            # loss.backward()
+            scaler.scale(loss).backward()
+            # optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             
             total_loss += loss.item()
 
-        epoch_loss = total_loss/len(dataloader.dataset)
-        print(f"epoch {epoch+1}/{epochs}, loss : {epoch_loss}")
-
+    epoch_loss = total_loss/len(dataloader.dataset)
+    print(f"epoch {epoch+1}/{epochs}, loss : {epoch_loss}")
+    
+    wandb.log({'loss' : epoch_loss})
+    
     torch.save(model.state_dict(), './save/result.pt')
 
+    evaluation(tokenizer, device)
 
-def evaluation(tokenizer, max_seq, embedding_dim, channel, device):
+
+def evaluation(tokenizer, device):
     df = pd.read_csv('validation.csv')
     
     labels = df['label']
@@ -71,9 +93,9 @@ def evaluation(tokenizer, max_seq, embedding_dim, channel, device):
     vocab_size = tokenizer.vocab_size + len(tokenizer.get_added_vocab())
     model = modeling.Model(
         vocab_size=vocab_size, 
-        max_seq=max_seq, 
-        embedding_dim=embedding_dim, 
-        channel=channel, 
+        max_seq=200, 
+        embedding_dim=config.embedding_dim,
+        channel=config.channel,
         num_class=2,
         device=device)
     model.load_state_dict(torch.load('./save/result.pt'))
@@ -97,20 +119,14 @@ def evaluation(tokenizer, max_seq, embedding_dim, channel, device):
     eval_acc = accuracy_score(labels, preds)
 
     print(f"eval f1 : {eval_f1}, eval_acc : {eval_acc}, mean time : {mean_time/len(dataset)}")
+    
+    wandb.log({'f1' : eval_f1, 'mean_time' : mean_time/len(dataset)})
 
 
 if __name__ == "__main__":
-    # config
-    max_seq = 200
-    embedding_dim = 256
-    channel = 512
-    
     # device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'device = {device}')
-    
-    # load tokenizer
-    tokenizer = BertTokenizer.from_pretrained('emeraldgoose/bad-korean-tokenizer')
-    
-    main(tokenizer, max_seq, embedding_dim, channel, device)
-    evaluation(tokenizer, max_seq, embedding_dim, channel, device)
+
+    main()
+

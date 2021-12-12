@@ -1,0 +1,16 @@
+program: train.py
+method: bayes
+metric:
+  name: f1
+  goal: maximize
+parameters:
+  learning_rate:
+    min: 0.0001
+    max: 0.1
+  epochs:
+    min: 1
+    max: 200
+  embedding_dim:
+    values: [128, 256, 512, 1024]
+  channel:
+    values: [128, 256, 512, 1024]
