@@ -7,33 +7,37 @@ from transformers import BertTokenizer
 import torch.nn as nn
 from torch.utils.data.dataloader import DataLoader
 from sklearn.metrics import f1_score, accuracy_score
-from tqdm import tqdm, trange
+from tqdm import tqdm
 
 import modeling
 from data import load_dataset, punctuation, tokenized_sentence
 
 import wandb
 
-random.seed(42)
-
-defaults = dict(learning_rate=0.0518, label_smoothing=0.1107, epochs=15, embedding_dim=768, channel=512)
+defaults = dict(learning_rate=0.0001, label_smoothing=0.1, epochs=50, embedding_dim=768, channel=512)
 wandb.init(config=defaults, project='final_project')
 config = wandb.config
 
 def main():
-    print(f'config : embedding_dim = {config.embedding_dim}, channel = {config.channel}')
+    print(f'config : {defaults}')
     
     # load tokenizer
     tokenizer = BertTokenizer.from_pretrained('emeraldgoose/bad-korean-tokenizer')
 
-    df = pd.read_csv('curse.csv', index_col=0)
+    df = pd.read_csv('data.csv')
+    eval_df = pd.read_csv('korean_hate_speech.csv')
     
     labels = df['label']
+    eval_labels = eval_df['label']
     df = punctuation(df)
     df = tokenized_sentence(tokenizer, df)
+    eval_df = tokenized_sentence(tokenizer, eval_df)
     
     dataset = load_dataset(df, labels)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    eval_dataset = load_dataset(eval_df, eval_labels)
+
+    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=1, shuffle=False)
     
     vocab_size = tokenizer.vocab_size + len(tokenizer.get_added_vocab())
     model = modeling.Model(
@@ -44,7 +48,6 @@ def main():
         num_class=2,
         device=device)
     model.to(device)
-    model.train()
     wandb.watch(model)
     
     criterion = nn.CrossEntropyLoss(label_smoothing=config.label_smoothing)
@@ -52,9 +55,11 @@ def main():
     scaler = torch.cuda.amp.GradScaler()
 
     epochs = config.epochs
-    for epoch in trange(epochs):
+    best_f1 = 0.7
+    for epoch in range(epochs):
         total_loss = 0
         pbar = tqdm(enumerate(dataloader), total=len(dataloader))
+        model.train()
         for i, batch in pbar:
             input = batch['input_ids'].to(device)
             label = batch['label'].to(device)
@@ -76,11 +81,31 @@ def main():
             pbar.set_description(f"epoch {epoch+1}/{epochs}, loss : {epoch_loss:.3f}")
             wandb.log({'loss' : epoch_loss})
         pbar.close()
-    
-    torch.save(model.state_dict(), './save/result.pt')
 
-    evaluation(tokenizer, device)
+        # if (epoch+1)%10!=0: continue
+        preds = []
+        mean_time = 0
+        with torch.no_grad():
+            model.eval()
+            for batch in eval_dataloader:
+                start = time.time()
+                
+                input = batch['input_ids'].to(device)
+                output = model(input)
+                preds.append(output.argmax(-1).item())
+                
+                end = time.time()
+                mean_time += (end - start)
+        
+        eval_f1 = f1_score(eval_labels, preds, average='micro')
 
+        print(f"eval f1 : {eval_f1:.3f}, mean time : {mean_time/len(eval_dataset)}")
+
+        if best_f1 < eval_f1 :
+            torch.save(model.state_dict(), './save/result.pt')
+            best_f1 = eval_f1
+
+    print(f'best f1 = {best_f1}')
 
 def evaluation(tokenizer, device):
     df = pd.read_csv('korean_hate_speech.csv')
