@@ -24,7 +24,7 @@ class load_dataset(Dataset):
 def punctuation(dataset):
     """punctuation preprocessing."""
     """텍스트 길이의 10%를 punctuation 삽입하여 모델이 robust하도록 한다."""
-    punc = ['.',',','!','@','#','~','?','*','^','$','%','(',')','/','-','+']
+    punc = ['.',',','!','@','~','?','*','^','%']
     for i in range(len(dataset)):
         text = dataset['text'][i].split()
 
