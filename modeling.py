@@ -76,9 +76,9 @@ class Model(nn.Module):
         output3 = self.conv3(output) # size = (batch, embedding_dim, max_seq''')
         
         # layer normalization and activation
-        lm1 = nn.LayerNorm(output1.size()[-1], device=self.device)
-        lm2 = nn.LayerNorm(output2.size()[-1], device=self.device)
-        lm3 = nn.LayerNorm(output3.size()[-1], device=self.device)
+        lm1 = nn.LayerNorm(output1.size()[-1], device=('cuda' if self.device=='cuda' else 'cpu'))
+        lm2 = nn.LayerNorm(output2.size()[-1], device=('cuda' if self.device=='cuda' else 'cpu'))
+        lm3 = nn.LayerNorm(output3.size()[-1], device=('cuda' if self.device=='cuda' else 'cpu'))
         self._init_weights(lm1)
         self._init_weights(lm2)
         self._init_weights(lm3)
