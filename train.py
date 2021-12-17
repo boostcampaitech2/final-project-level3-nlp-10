@@ -1,7 +1,5 @@
 import os
 import time
-import random
-import numpy as np
 import pandas as pd
 
 import torch
@@ -12,34 +10,28 @@ from sklearn.metrics import f1_score, accuracy_score
 from tqdm import tqdm
 
 import modeling
+from utils import Config, set_seed, GOOGLE_APPLICATION_CREDENTIAL, MLFLOW_TRACKING_URI
 from data import load_dataset, punctuation, tokenized_sentence
 
-import wandb
+import mlflow
 
-def set_seed(random_seed):
-    torch.manual_seed(random_seed)
-    torch.cuda.manual_seed(random_seed)
-    torch.cuda.manual_seed_all(random_seed)  # if use multi-GPU
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    np.random.seed(random_seed)
-    random.seed(random_seed)
+os.environ['GOOGLE_APPLICATION_CREDENTIALS']=GOOGLE_APPLICATION_CREDENTIAL
+os.environ['MLFLOW_TRACKING_URI']=MLFLOW_TRACKING_URI
+
 set_seed(42)
 
-defaults = dict(
+config = Config(
     dropout1=0.3,
     dropout2=0.4,
-    learning_rate=0.0001,
+    learning_rate=1e-3,
     label_smoothing=0.5,
-    epochs=50,
+    epochs=10,
     embedding_dim=100,
-    channel=32)
-wandb.init(config=defaults, project='final_project')
-config = wandb.config
+    channel=128)
 
-
-def main(tokenizer):
-    print(f'config : {defaults}')
+def train_beep(tokenizer):
+    print(f'config : {config.__dict__}')
+    mlflow.log_params(config.__dict__)
 
     df = pd.read_csv('train_.csv')
     eval_df = pd.read_csv('test_.csv')
@@ -58,6 +50,7 @@ def main(tokenizer):
     eval_dataloader = DataLoader(eval_dataset, batch_size=64, shuffle=False)
     
     vocab_size = tokenizer.vocab_size + len(tokenizer.get_added_vocab())
+    print(f'vocab size = {vocab_size}')
     model = modeling.Model(
         vocab_size=vocab_size, 
         embedding_dim=config.embedding_dim, 
@@ -67,11 +60,9 @@ def main(tokenizer):
         dropout2=config.dropout2,
         device=device)
     model.to(device)
-    wandb.watch(model)
     
     criterion = nn.CrossEntropyLoss(label_smoothing=config.label_smoothing)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
-    scaler = torch.cuda.amp.GradScaler()
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer=optimizer,
         epochs = config.epochs,
@@ -81,14 +72,12 @@ def main(tokenizer):
     )
 
     epochs = config.epochs
-    best_f1, threshold_best_f1 = 0, 0.7877
+    best_f1, threshold_best_f1 = 0, 0.75
     for epoch in range(epochs):
         total_loss = 0
         pbar = tqdm(enumerate(dataloader), total=len(dataloader))
         preds = []
         labels = []
-        # if os.path.exists('./save/temp/result.pt'):
-        #     model.load_state_dict(torch.load('./save/temp/result.pt'))
         model.train()
         for i, batch in pbar:
             input = batch['input_ids'].to(device)
@@ -102,9 +91,8 @@ def main(tokenizer):
             preds += output.argmax(-1).tolist()
             labels += label.tolist()
             
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+            optimizer.step()
             scheduler.step()
             
             total_loss += loss.item()
@@ -113,11 +101,12 @@ def main(tokenizer):
             
             pbar.update()
             pbar.set_description(f"epoch {epoch+1}/{epochs}, loss : {epoch_loss:.3f}")
-            wandb.log({'loss' : epoch_loss})
+            mlflow.log_metric('train loss', epoch_loss)
         
         accuracy = accuracy_score(labels, preds)
         print(f'train acc : {accuracy:.3f}')
         pbar.close()
+        mlflow.log_metric('train acc', accuracy)
 
         preds = []
         mean_time = 0
@@ -136,7 +125,8 @@ def main(tokenizer):
         eval_f1 = f1_score(eval_labels, preds, average='micro')
 
         print(f"eval f1 : {eval_f1:.3f}, mean time : {mean_time/len(eval_dataset):.4}")
-        wandb.log({'f1' : eval_f1, 'mean_time' : mean_time/len(dataset)})
+        mlflow.log_metric('eval f1', eval_f1)
+        mlflow.log_metric('mean time', mean_time/len(eval_dataset))
 
         if eval_f1 > best_f1:
             torch.save(model.state_dict(), f'./save/temp/result.pt')
@@ -146,10 +136,10 @@ def main(tokenizer):
             best_f1 = eval_f1
 
     print(f'best f1 = {best_f1}')
-    wandb.log({'f1' : best_f1})
+    mlflow.pytorch.log_model(model, 'model', registered_model_name="ToxicityText")
 
 
-def curse(tokenizer):
+def train_curse(tokenizer):
     df = pd.read_csv('curse.csv')
     eval_df = pd.read_csv('test_.csv')
 
@@ -177,11 +167,9 @@ def curse(tokenizer):
         device=device)
     model.load_state_dict(torch.load('./save/temp/result.pt'))
     model.to(device)
-    wandb.watch(model)
     
     criterion = nn.CrossEntropyLoss(label_smoothing=config.label_smoothing)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
-    scaler = torch.cuda.amp.GradScaler()
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer=optimizer,
         epochs = config.epochs,
@@ -191,14 +179,12 @@ def curse(tokenizer):
     )
 
     epochs = config.epochs
-    best_f1, threshold_best_f1 = 0, 0.7877
+    best_f1, threshold_best_f1 = 0, 0.77
     for epoch in range(epochs):
         total_loss = 0
         pbar = tqdm(enumerate(dataloader), total=len(dataloader))
         preds = []
         labels = []
-        # if os.path.exists('./save/temp/result.pt'):
-        #     model.load_state_dict(torch.load('./save/temp/result.pt'))
         model.train()
         for i, batch in pbar:
             input = batch['input_ids'].to(device)
@@ -212,9 +198,8 @@ def curse(tokenizer):
             preds += output.argmax(-1).tolist()
             labels += label.tolist()
             
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+            optimizer.step()
             scheduler.step()
             
             total_loss += loss.item()
@@ -223,10 +208,11 @@ def curse(tokenizer):
             
             pbar.update()
             pbar.set_description(f"epoch {epoch+1}/{epochs}, loss : {epoch_loss:.3f}")
-            wandb.log({'loss' : epoch_loss})
+            mlflow.log_metric('train loss', epoch_loss)
         
         accuracy = accuracy_score(labels, preds)
         print(f'train acc : {accuracy:.3f}')
+        mlflow.log_metric('train acc', accuracy)
         pbar.close()
 
         preds = []
@@ -246,7 +232,8 @@ def curse(tokenizer):
         eval_f1 = f1_score(eval_labels, preds, average='micro')
 
         print(f"eval f1 : {eval_f1:.3f}, mean time : {mean_time/len(eval_dataset):.4}")
-        wandb.log({'f1' : eval_f1, 'mean_time' : mean_time/len(dataset)})
+        mlflow.log_metric('eval f1', eval_f1)
+        mlflow.log_metric('mean time', mean_time/len(eval_dataset))
 
         if eval_f1 > best_f1:
             torch.save(model.state_dict(), f'./save/temp/result.pt')
@@ -256,16 +243,17 @@ def curse(tokenizer):
             best_f1 = eval_f1
 
     print(f'best f1 = {best_f1}')
-    wandb.log({'f1' : best_f1})
+    mlflow.pytorch.log_model(model, 'model', registered_model_name="ToxicityText")
 
 if __name__ == "__main__":
     # device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
     print(f'device = {device}')
 
     # load tokenizer
     tokenizer = BertTokenizer.from_pretrained('jiho0304/bad-korean-tokenizer')
 
-    main(tokenizer)
-    curse(tokenizer)
+    train_beep(tokenizer)
+    train_curse(tokenizer)
 
