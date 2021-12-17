@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class Model(nn.Module):
-    def __init__(self, vocab_size : int, embedding_dim : int, channel : int, num_class : int, dropout1: float, dropout2: float, device: torch.device) -> None:
+    def __init__(self, vocab_size : int, embedding_dim : int, channel : int, num_class : int, dropout1: float, dropout2: float) -> None:
         """Filtering Model based CNN"""
         super().__init__()
         self.embedding = nn.Embedding(
