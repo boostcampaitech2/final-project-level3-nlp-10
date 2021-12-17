@@ -1,6 +1,3 @@
-from math import trunc
-from os import truncate
-import pandas as pd
 import torch
 from torch.utils.data.dataloader import Dataset
     
@@ -51,6 +48,7 @@ def tokenized_sentence(tokenizer, dataset):
         padding='max_length',
         truncation=True,
         max_length=200,
-        return_token_type_ids=False
+        return_token_type_ids=False,
+        add_special_tokens=True,
     )
     return tokenized
