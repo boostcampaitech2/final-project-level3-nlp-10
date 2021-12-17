@@ -1,15 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn.modules import adaptive
-from torch.nn.modules.pooling import AdaptiveAvgPool1d
 
 
 class Model(nn.Module):
-    def __init__(self, vocab_size : int, embedding_dim : int, channel : int, num_class : int, dropout1: float, dropout2: float, device) -> None:
+    def __init__(self, vocab_size : int, embedding_dim : int, channel : int, num_class : int, dropout1: float, dropout2: float, device: torch.device) -> None:
         """Filtering Model based CNN"""
         super().__init__()
-        self.device = device
         self.embedding = nn.Embedding(
             num_embeddings=vocab_size,
             embedding_dim=embedding_dim)
@@ -57,10 +53,11 @@ class Model(nn.Module):
 
         self.AvgPool = nn.AdaptiveAvgPool1d(channel)
 
-
     def forward(self, input):
         """Forward."""
         # input size = (batch, max_seq)
+        if type(input[0][0].item())==float:
+            input = torch.tensor(input.tolist(),dtype=torch.long)
 
         embd = self.embedding(input) # size = (batch, max_seq, embedding_dim)
         embd = self.dropout(embd)
@@ -76,9 +73,10 @@ class Model(nn.Module):
         output3 = self.conv3(output) # size = (batch, embedding_dim, max_seq''')
         
         # layer normalization and activation
-        lm1 = nn.LayerNorm(output1.size()[-1], device=('cuda' if self.device=='cuda' else 'cpu'))
-        lm2 = nn.LayerNorm(output2.size()[-1], device=('cuda' if self.device=='cuda' else 'cpu'))
-        lm3 = nn.LayerNorm(output3.size()[-1], device=('cuda' if self.device=='cuda' else 'cpu'))
+        device = torch.device('cuda') if self.embedding.weight.is_cuda else torch.device('cpu')
+        lm1 = nn.LayerNorm(output1.size()[-1]).to(device)
+        lm2 = nn.LayerNorm(output2.size()[-1]).to(device)
+        lm3 = nn.LayerNorm(output3.size()[-1]).to(device)
         self._init_weights(lm1)
         self._init_weights(lm2)
         self._init_weights(lm3)
