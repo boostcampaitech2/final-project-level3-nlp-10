@@ -1,5 +1,6 @@
 import torch
-from torch.utils.data.dataloader import Dataset
+from torch.utils.data import Dataset
+from tqdm import trange
     
     
 class load_dataset(Dataset):
@@ -8,10 +9,13 @@ class load_dataset(Dataset):
         self.dataset = dataset
         self.labels = labels
 
-    def __getitem__(self, idx):
-        item = {key: val[idx].clone().detach()
-                for key, val in self.dataset.items()}
-        item['label'] = torch.tensor(self.labels[idx])
+    def __getitem__(self, idx) -> dict:
+        # item = {key: val[idx].clone().detach() for key, val in self.dataset.items()}
+        # item['label'] = torch.tensor(self.labels[idx])
+        item = {
+            'input_ids': torch.tensor(self.dataset[idx]),
+            'label': torch.tensor(self.labels[idx]),
+        }
         return item
 
     def __len__(self) -> int:
@@ -21,8 +25,9 @@ class load_dataset(Dataset):
 def punctuation(dataset):
     """punctuation preprocessing."""
     """텍스트 길이의 10%를 punctuation 삽입하여 모델이 robust하도록 한다."""
+    print('start puncutation')
     punc = ['.',',','!','@','~','?','*','^','%']
-    for i in range(len(dataset)):
+    for i in trange(len(dataset)):
         text = dataset['text'][i].split()
 
         if len(text) < 6: continue
