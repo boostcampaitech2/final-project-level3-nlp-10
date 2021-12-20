@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import Dataset
 from tqdm import trange
+import re
     
     
 class load_dataset(Dataset):
@@ -55,3 +56,48 @@ def tokenized_sentence(tokenizer, df):
             for i in range(len(tokens)-200): tokens.pop()
         tokenized.append(tokens)
     return tokenized
+
+
+quotes = re.compile(r"[“”‘’\"\']")
+l_bracket = re.compile(r"[〈<＜「≪《『]")
+r_bracket = re.compile(r"[〉>＞」≫》』]")
+dots = re.compile(r'[‥…]+')
+question = re.compile(r'[\?¿？]+')
+exclamation = re.compile(r'[!¡！]+')
+remainders = re.compile(r"([^\-—_=+,\./<>?\[\]{};:\'\"!@#$%\^&*\(\)₩`´~\|\\ㄱ-ㅎㅏ-ㅣ가-힣a-zA-Z0-9ぁ-ゔゞァ-・ヽヾ゛゜ー一-龯\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\s]+)")
+multiple_spaces = re.compile(r"\s+")
+
+def preprocessing(dataset):
+    """
+    dataset은 pd.DataFrame 형식으로 첫번째 column이 'text'인 경우를 상정하고 만들었습니다.
+    """
+    for i in trange(len(dataset)):
+        comment = dataset.iloc[i, 0]
+        # checking nan
+        if comment != comment:
+            continue
+        
+        tmp = comment
+        comment = quotes.sub(r"\'", comment)
+        comment = l_bracket.sub("<", comment)
+        comment = r_bracket.sub(">", comment)
+        comment = dots.sub(r'...', comment)
+        comment = question.sub(r'\?', comment)
+        comment = exclamation.sub(r'!', comment)
+        comment = remainders.sub(r'', comment)
+        comment = multiple_spaces.sub(r" ", comment)
+        if len(comment) <= 1 and tmp != comment:
+            comment = np.nan
+        elif len(comment) > 500:
+            comment = np.nan
+        
+        dataset.iloc[i, 0] = comment
+        
+    print("checking nan")
+    print(sum(dataset['text'].isna()), "number of nan exist")
+    dataset = dataset[dataset['text'].notna()]
+    print("checking null")
+    print(sum(dataset['text'].isnull()), "number of null exist")
+    dataset = dataset[dataset['text'].notnull()]
+    
+    return dataset
