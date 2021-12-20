@@ -45,15 +45,13 @@ def punctuation(dataset):
     return dataset
 
 
-def tokenized_sentence(tokenizer, dataset):
-    """return tokenized sentence(input_ids, token_type_ids, attention_mask)"""
-    tokenized = tokenizer(
-        list(dataset['text']),
-        return_tensors='pt',
-        padding='max_length',
-        truncation=True,
-        max_length=200,
-        return_token_type_ids=False,
-        add_special_tokens=True,
-    )
+def tokenized_sentence(tokenizer, df):
+    tokenized = []
+    for text in list(df['text']):
+        tokens = tokenizer.encode(text).ids
+        if len(tokens) <= 200:
+            for i in range(200-len(tokens)): tokens.append(0)
+        elif len(tokens) > 200:
+            for i in range(len(tokens)-200): tokens.pop()
+        tokenized.append(tokens)
     return tokenized
