@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import Dataset
 from tqdm import trange
+import numpy as np
 import re
     
     
@@ -72,7 +73,7 @@ def preprocessing(dataset):
     dataset은 pd.DataFrame 형식으로 첫번째 column이 'text'인 경우를 상정하고 만들었습니다.
     """
     for i in trange(len(dataset)):
-        comment = dataset.iloc[i, 0]
+        comment = dataset[i]
         # checking nan
         if comment != comment:
             continue
@@ -91,13 +92,6 @@ def preprocessing(dataset):
         elif len(comment) > 500:
             comment = np.nan
         
-        dataset.iloc[i, 0] = comment
-        
-    print("checking nan")
-    print(sum(dataset['text'].isna()), "number of nan exist")
-    dataset = dataset[dataset['text'].notna()]
-    print("checking null")
-    print(sum(dataset['text'].isnull()), "number of null exist")
-    dataset = dataset[dataset['text'].notnull()]
+        dataset[i] = comment
     
     return dataset
