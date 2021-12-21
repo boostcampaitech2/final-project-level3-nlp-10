@@ -7,13 +7,14 @@ import re
     
 class load_dataset(Dataset):
     """dataset class"""
-    def __init__(self, dataset, labels) -> None:
+    def __init__(self, dataset, labels=None) -> None:
         self.dataset = dataset
         self.labels = labels
 
     def __getitem__(self, idx) -> dict:
-        # item = {key: val[idx].clone().detach() for key, val in self.dataset.items()}
-        # item['label'] = torch.tensor(self.labels[idx])
+        if self.labels == None:
+            return {'input_ids' : torch.tensor(self.dataset[idx])}
+        
         item = {
             'input_ids': torch.tensor(self.dataset[idx]),
             'label': torch.tensor(self.labels[idx]),
@@ -21,7 +22,7 @@ class load_dataset(Dataset):
         return item
 
     def __len__(self) -> int:
-        return len(self.labels)
+        return len(self.dataset)
 
 
 def punctuation(dataset):
