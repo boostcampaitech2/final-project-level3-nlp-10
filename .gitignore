@@ -3,11 +3,16 @@ mlruns
 save
 verses
 backup
+kaggle
+mlflow-tracking-server
+credential.json
+MLProject
+airflow
+.pytest_cache
+pseudo
 
 curse.csv
 validation.csv
-test.ipynb
-dataset2.ipynb
 wandb
 korean_hate_speech.csv
 data.csv
@@ -17,3 +22,7 @@ train.csv
 test.csv
 train_.csv
 test_.csv
+pseudo_labeled.csv
+pseudo_labeled2.csv
+labeled.csv
+
