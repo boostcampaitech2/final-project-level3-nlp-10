@@ -2,11 +2,9 @@ import os
 import mlflow
 import pandas as pd
 import numpy as np
+from utils import GOOGLE_APPLICATION_CREDENTIAL, MLFLOW_TRACKING_URI
 
 import time
-
-GOOGLE_APPLICATION_CREDENTIAL = './credential.json'
-MLFLOW_TRACKING_URI = 'http://35.209.140.113/'
 
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"]=GOOGLE_APPLICATION_CREDENTIAL
 
