@@ -1,9 +1,11 @@
 import os
 import gc
+import random
 import pandas as pd
 import numpy as np
 from scipy.sparse import construct
 from sklearn.metrics import f1_score
+from sklearn.utils import shuffle
 
 import torch
 from torch import optim
@@ -32,17 +34,13 @@ config = Config(
     embedding_dim=100,
     channel=128)
 
-def alpha_weight(step):
-    """Pseudo Label에 대한 Loss 가중치"""
-    T1 = 100
-    T2 = 700
-    af = 3.0
-    if step < T1:
-        return 0.0
-    elif step > T2:
-        return af
-    else:
-         return ((step-T1) / (T2-T1))*af
+
+def seed_init_fn(x):
+   seed = 42 + x
+   np.random.seed(seed)
+   random.seed(seed)
+   torch.manual_seed(seed)
+   return
 
 
 def train(tokenizer, device) -> None:
@@ -86,10 +84,11 @@ def train(tokenizer, device) -> None:
     a_dataset = load_dataset(a_df)
     eval_dataset = load_dataset(eval_df, eval_labels)
 
-    # dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
-    # p_dataloader = DataLoader(p_dataset, batch_size=1, shuffle=True)
-    # a_dataloader = DataLoader(a_dataset, batch_size=1, shuffle=True)
-    eval_dataloader = DataLoader(eval_dataset, batch_size=32, shuffle=False)
+    batch_size = 32
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, worker_init_fn=seed_init_fn)
+    p_dataloader = DataLoader(p_dataset, batch_size=batch_size, shuffle=True, worker_init_fn=seed_init_fn)
+    a_dataloader = DataLoader(a_dataset, batch_size=batch_size, shuffle=True, worker_init_fn=seed_init_fn)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
 
     # Load model
     teacher = ElectraForSequenceClassification.from_pretrained('jiho0304/curseELECTRA')
@@ -119,75 +118,75 @@ def train(tokenizer, device) -> None:
 
     best_acc = 0
     dataset_iter, p_dataset_iter = 0, 0
-    for step in trange(len(p_dataset)):
+    for step in trange(len(p_dataloader) * 5): # 5 epochs
         teacher.train()
         student.train()
 
-        try:
-            labeled = dataset[dataset_iter]
-            dataset_iter += 1
-        except:
-            dataset_iter = 0
-            labeled = dataset[dataset_iter]
-            dataset_iter += 1
-        try:
-            a_labeled = a_dataset[p_dataset_iter]
-            unlabeled = p_dataset[p_dataset_iter]
-            p_dataset_iter += 1
-        except:
-            p_dataset_iter = 0
-            a_labeled = a_dataset[p_dataset_iter]
-            unlabeled = p_dataset[p_dataset_iter]
-            p_dataset_iter += 1
+        labeled = next(iter(dataloader))
+        unlabeled = next(iter(p_dataloader))
+        a_labeled = next(iter(a_dataloader))
 
-        l_input = labeled['input_ids'].tolist()
-        l_attention_mask = labeled['attention_mask'].tolist()
+        # labeled data
+        l_input = labeled['input_ids']
+        l_attention_mask = labeled['attention_mask']
         targets = labeled['label'].to(device)
 
-        # strong augmentation을 augmentation된 unlabeled dataset으로 가정
-        a_input = a_labeled['input_ids'].tolist()
-        a_attention_mask = a_labeled['attention_mask'].tolist()
+        # reference의 strong augmentation을 augmentation한 unlabeled dataset으로 가정
+        a_input = a_labeled['input_ids']
+        a_attention_mask = a_labeled['attention_mask']
 
-        # weak augmentation을 original unlabeled dataset으로 가정
-        u_input = unlabeled['input_ids'].tolist()
-        u_attention_mask = unlabeled['attention_mask'].tolist()
+        # reference의 weak augmentation을 unlabeled dataset으로 가정
+        u_input = unlabeled['input_ids']
+        u_attention_mask = unlabeled['attention_mask']
 
-        t_input_ids = torch.tensor([l_input, a_input, u_input]).to(device)
-        t_attention_mask = torch.tensor([l_attention_mask, a_attention_mask, u_attention_mask]).to(device)
+        # teacher model에 먹일 input 구성 (labeled, augmention, unlabeled)
+        t_input_ids = torch.cat((l_input, a_input, u_input)).to(device)
+        t_attention_mask = torch.cat((l_attention_mask, a_attention_mask, u_attention_mask)).to(device)
         
         t_logits = teacher(input_ids=t_input_ids, attention_mask=t_attention_mask)['logits']
-        t_logits_l, t_logits_a, t_logits_u = t_logits
+        t_logits_l = t_logits[:batch_size]
+        t_logits_a, t_logits_u = t_logits[batch_size:].chunk(2)
         
-        t_loss_l = criterion(t_logits_l.unsqueeze(0), targets.unsqueeze(0))
+        # teacher모델의 labeled data에 대한 loss
+        t_loss_l = criterion(t_logits_l, targets)
 
+        # augmentation을 통한 data의 label과 unlabeled data의 로스의 비교(unlabeled data로부터 증강되었기 때문)
         soft_pseudo_label = torch.softmax(t_logits_u.detach(), dim=-1)
         max_probs, hard_pseudo_label = torch.max(soft_pseudo_label, dim=-1)
-        mask = max_probs.ge(0.90).float()
-        t_loss_u = torch.mean(
+        mask = max_probs.ge(0.70).float()
+        t_loss_u = torch.mean( # KL.Div loss
             -(soft_pseudo_label * torch.log_softmax(t_logits_a, dim=-1)).sum(dim=-1) * mask
         )
         weight_u = 1 * min(1., (step+1)/1) # lambda-u, uda_step
         t_loss_uda = t_loss_l + weight_u * t_loss_u
 
-        s_input_ids = torch.tensor([l_input, a_input]).to(device)
+        # student model에 먹일 input 구성 (labeled, augmention)
+        s_input_ids = torch.cat((l_input, a_input)).to(device)
         s_logits = student(s_input_ids)
-        s_logits_l, s_logits_a = s_logits
+        s_logits_l, s_logits_a = s_logits[:batch_size], s_logits[batch_size:]
 
-        s_loss_l_old = F.cross_entropy(s_logits_l.unsqueeze(0).detach(), targets.unsqueeze(0))
-        s_loss = criterion(s_logits_a.unsqueeze(0), hard_pseudo_label.unsqueeze(0))
+        # 업데이트 되지 않은 student 모델의 labeled data에 대한 로스값(labeled data에 대한 validation)
+        s_loss_l_old = F.cross_entropy(s_logits_l.detach(), targets)
+        
+        # augmented data에 대해서 student가 학습
+        s_loss = criterion(s_logits_a, hard_pseudo_label)
 
         s_loss.backward()
         optimizer_s.step()
 
+        # 업데이트 된 student 모델의 labeled data에 대한 로스
         with torch.no_grad():
-            s_logits_l = student(torch.tensor(l_input).unsqueeze(0).to(device))
-        s_loss_l_new = F.cross_entropy(s_logits_l.detach(), targets.unsqueeze(0))
+            s_logits_l = student(l_input.to(device))
+        s_loss_l_new = F.cross_entropy(s_logits_l.detach(), targets)
 
+        # teacher coefficient : https://github.com/kekmodel/MPL-pytorch/issues/6
         dot_product = s_loss_l_old - s_loss_l_new
+
+        # compute the teacher's gradient from student's feedback
         _, hard_pseudo_label = torch.max(t_logits_a.detach(), dim=-1)
-        t_loss_mpl = dot_product * F.cross_entropy(t_logits_a.unsqueeze(0), hard_pseudo_label.unsqueeze(0))
+        t_loss_mpl = dot_product * F.cross_entropy(t_logits_a, hard_pseudo_label)
         
-        t_loss = t_loss_uda + t_loss_mpl
+        t_loss = t_loss_uda + t_loss_mpl # t_loss_uda = t_loss_l + t_loss_unlabeled
 
         t_loss.backward()
         optimizer_t.step()
@@ -196,7 +195,7 @@ def train(tokenizer, device) -> None:
         student.zero_grad()
     
         # step마다 Evalution 진행
-        if step % 500 == 0:
+        if step % 10000 == 0:
             student.eval()
             correct, loss = 0, 0
             zero, one = 0, 0
@@ -226,6 +225,7 @@ def train(tokenizer, device) -> None:
                 # mlflow.pytorch.log_model(student, 'model', registered_model_name="ToxicityText")
                 best_acc = eval_acc
 
+    print(f'best f1 = {eval_f1}')
 
 if __name__ == "__main__":
     # device
