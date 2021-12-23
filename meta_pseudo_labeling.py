@@ -24,10 +24,10 @@ from tqdm import trange, tqdm
 set_seed(42)
 
 config = Config(
-    dropout1=0.3,
-    dropout2=0.4,
+    dropout1=0,
+    dropout2=0,
     learning_rate=1e-3,
-    label_smoothing=0.5,
+    label_smoothing=0,
     epochs=50,
     embedding_dim=100,
     channel=128)
@@ -45,29 +45,6 @@ def alpha_weight(step):
          return ((step-T1) / (T2-T1))*af
 
 
-"""TEST"""
-def kl_divergence_fn(unlabeled_logits, augmented_logits, sharpen_ratio=1.0):
-    ## https://github.com/huggingface/transformers/issues/1181
-
-    loss_fn = torch.nn.KLDivLoss(reduction="none")
-    return loss_fn(F.log_softmax(augmented_logits, dim=1), F.softmax(unlabeled_logits/sharpen_ratio, dim=1)).sum(dim=1)
-
-
-"""TEST"""
-def get_tsa_threshold(global_step, t_total, num_labels, tsa='linear'):
-    tsa = tsa.lower()
-    if tsa == 'log':
-        a_t = 1 - np.exp(-(global_step / t_total) * 5)
-    elif tsa == 'exp':
-        a_t = np.exp(-(1 / t_total) * 5)
-    else:
-        a_t = (global_step / t_total)
-
-    threshold=a_t * (1-(1/num_labels)) + (1/num_labels)
-
-    return threshold
-
-
 def train(tokenizer, device) -> None:
     # Print Hyperparameters
     print(f'config : {config.__dict__}')
@@ -77,8 +54,14 @@ def train(tokenizer, device) -> None:
     df = pd.read_csv('labeled.csv')
     p_df = pd.read_csv('twitch.csv')
 
-    # pseudo labeling할 데이터 중 7만개를 샘플로 사용합니다.
-    p_df = p_df.sample(frac=0.1, random_state=42).reset_index().drop(['index'], axis=1)
+    # pseudo labeling할 데이터 중 10만개를 샘플로 사용합니다.
+    true_label = p_df[(p_df['none']<p_df['curse'])==True]
+    false_label = p_df.drop(true_label.index, axis=0).reset_index().drop(['index'], axis=1)
+    false_label = false_label.sample(frac=0.1, random_state=42)
+    true_label = true_label.reset_index().drop(['index'], axis=1)
+    true_label = true_label.append(false_label)
+    true_label = true_label.sample(frac=1, random_state=42).reset_index().drop(['index'], axis=1)
+    p_df = true_label
 
     # Augmentation
     a_df = p_df
@@ -109,6 +92,8 @@ def train(tokenizer, device) -> None:
     eval_dataloader = DataLoader(eval_dataset, batch_size=32, shuffle=False)
 
     # Load model
+    teacher = ElectraForSequenceClassification.from_pretrained('jiho0304/curseELECTRA')
+
     vocab_size = 30000
     print(f'vocab size = {vocab_size}')
     student = modeling.Model(
@@ -119,14 +104,12 @@ def train(tokenizer, device) -> None:
         dropout1=config.dropout1,
         dropout2=config.dropout2)
     student.to(device)
-
-    teacher = ElectraForSequenceClassification.from_pretrained('jiho0304/curseELECTRA')
     teacher.to(device)
     
     # Set teacher, student's optimizer
-    criterion = torch.nn.CrossEntropyLoss(label_smoothing=config.label_smoothing)
-    optimizer_s = torch.optim.AdamW(student.parameters(), lr=config.learning_rate)
-    optimizer_t = torch.optim.AdamW(teacher.parameters(), lr=config.learning_rate)
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer_s = torch.optim.AdamW(student.parameters(), lr=1e-5)
+    optimizer_t = torch.optim.AdamW(teacher.parameters(), lr=1e-5)
 
     # Meta Pseudo Labeling
     print('------Start Training------')
@@ -136,7 +119,9 @@ def train(tokenizer, device) -> None:
 
     best_acc = 0
     dataset_iter, p_dataset_iter = 0, 0
-    for step in trange(max(len(dataset), len(p_dataset))):
+    for step in trange(len(p_dataset)):
+        teacher.train()
+        student.train()
 
         try:
             labeled = dataset[dataset_iter]
@@ -174,10 +159,10 @@ def train(tokenizer, device) -> None:
         t_logits_l, t_logits_a, t_logits_u = t_logits
         
         t_loss_l = criterion(t_logits_l.unsqueeze(0), targets.unsqueeze(0))
-        
-        soft_pseudo_label = torch.softmax(t_logits_u, dim=-1).sum(dim=-1)
+
+        soft_pseudo_label = torch.softmax(t_logits_u.detach(), dim=-1)
         max_probs, hard_pseudo_label = torch.max(soft_pseudo_label, dim=-1)
-        mask = max_probs.ge(0.95).float()
+        mask = max_probs.ge(0.90).float()
         t_loss_u = torch.mean(
             -(soft_pseudo_label * torch.log_softmax(t_logits_a, dim=-1)).sum(dim=-1) * mask
         )
@@ -188,7 +173,7 @@ def train(tokenizer, device) -> None:
         s_logits = student(s_input_ids)
         s_logits_l, s_logits_a = s_logits
 
-        s_loss_l_old = F.cross_entropy(s_logits_l.unsqueeze(0), targets.unsqueeze(0))
+        s_loss_l_old = F.cross_entropy(s_logits_l.unsqueeze(0).detach(), targets.unsqueeze(0))
         s_loss = criterion(s_logits_a.unsqueeze(0), hard_pseudo_label.unsqueeze(0))
 
         s_loss.backward()
@@ -196,15 +181,13 @@ def train(tokenizer, device) -> None:
 
         with torch.no_grad():
             s_logits_l = student(torch.tensor(l_input).unsqueeze(0).to(device))
-        s_loss_l_new = F.cross_entropy(s_logits_l, targets.unsqueeze(0))
+        s_loss_l_new = F.cross_entropy(s_logits_l.detach(), targets.unsqueeze(0))
 
         dot_product = s_loss_l_old - s_loss_l_new
-        _, hard_pseudo_label = torch.max(t_logits_a, dim=-1)
+        _, hard_pseudo_label = torch.max(t_logits_a.detach(), dim=-1)
         t_loss_mpl = dot_product * F.cross_entropy(t_logits_a.unsqueeze(0), hard_pseudo_label.unsqueeze(0))
         
         t_loss = t_loss_uda + t_loss_mpl
-        t_loss.detach_()
-        t_loss.requires_grad = True
 
         t_loss.backward()
         optimizer_t.step()
@@ -213,7 +196,7 @@ def train(tokenizer, device) -> None:
         student.zero_grad()
     
         # step마다 Evalution 진행
-        if (step + 1) % 100 == 0:
+        if step % 500 == 0:
             student.eval()
             correct, loss = 0, 0
             zero, one = 0, 0
@@ -236,7 +219,6 @@ def train(tokenizer, device) -> None:
             print(f'Epoch: {step+1} | Train Loss : {loss/len(eval_dataloader):.5f} | Test Acc : {correct/len(eval_dataset):.5f} | Zero : {zero} | One : {one} | F1 : {eval_f1:.5f}')
             # mlflow.log_metric('eval loss', loss/len(eval_dataloader))
             # mlflow.log_metric('Acc', correct.item()/len(eval_dataset))
-            student.train()
 
             eval_acc = correct/len(eval_dataloader)
             if eval_acc > best_acc:
@@ -252,6 +234,5 @@ if __name__ == "__main__":
 
     # load tokenizer
     tokenizer = BertWordPieceTokenizer('./vocab_3.txt', lowercase=False)
-
-    # train(tokenizer, device)
+    
     train(tokenizer, device)
