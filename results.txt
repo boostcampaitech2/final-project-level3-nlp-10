@@ -1,0 +1,29 @@
+### 모델
+레이블된 데이터의 20%로 평가
+토크나이저 vocab크기가 50만개
+길이 200으로 동일
+10 eopchs
+
+Rule based   | best acc = 0.81  | best f1 = 0.690 | CPU상에서 128배치 평균 추론시간 0.01s(1301개 단어)
+CNN          | best acc = 0.90  | best f1 = 0.878 | CPU상에서 128배치 평균 추론시간 0.03s 
+BiLSTM       | best acc = 0.929 | best f1 = 0.901 | CPU상에서 128배치 평균 추론시간 0.28s
+CNN + BiLSTM | best acc = 0.926 | best f1 = 0.911 | CPU상에서 128배치 평균 추론시간 0.3s
+
+* 128배치에서 0.3s가 2배치에서는 0.02s
+
+### 파라미터
+CNN + BiLSTM | params = 3390786   | 
+MobileBERT   | params = 24582914  |
+BERT         | params = 110618882 | 
+
+
+
+### 학습
+10 epochs
+레이블된 트위치 채팅 데이터로 평가
+학습 데이터를 비틀어서 학습할 경우 차이가 있음
+MPL -> finetuning | best acc = 0.79 | best f1 = 0.757
+only labeled      | best acc = 0.76 | best f1 = 0.742
+pseudo lableling  | best acc = 0.75 | best f1 = 0.729
+
+* pseudo label은 pseudo label에 의한 loss의 가중치가 

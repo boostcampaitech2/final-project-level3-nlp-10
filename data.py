@@ -13,22 +13,23 @@ class load_dataset(Dataset):
 
     def __getitem__(self, idx) -> dict:
         if self.labels == None:
-            return {'input_ids' : torch.tensor(self.dataset[idx])}
-        
-        item = {
-            'input_ids': torch.tensor(self.dataset[idx]),
-            'label': torch.tensor(self.labels[idx]),
-        }
+            item = dict(
+                input_ids=self.dataset['input_ids'][idx], 
+                attention_mask=self.dataset['attention_mask'][idx])
+        else:
+            item = dict(
+                input_ids=self.dataset['input_ids'][idx],
+                attention_mask=self.dataset['attention_mask'][idx], 
+                label=torch.tensor(self.labels[idx]))
         return item
 
     def __len__(self) -> int:
-        return len(self.dataset)
+        return len(self.dataset['input_ids'])
 
 
 def punctuation(dataset):
     """punctuation preprocessing."""
     """텍스트 길이의 10%를 punctuation 삽입하여 모델이 robust하도록 한다."""
-    print('start puncutation')
     punc = ['.',',','!','@','~','?','*','^','%']
     for i in trange(len(dataset)):
         text = dataset['text'][i].split()
@@ -47,17 +48,24 @@ def punctuation(dataset):
     
     return dataset
 
-
-def tokenized_sentence(tokenizer, df):
-    tokenized = []
-    for text in list(df['text']):
-        tokens = tokenizer.encode(text).ids
-        if len(tokens) <= 200:
-            for i in range(200-len(tokens)): tokens.append(0)
-        elif len(tokens) > 200:
-            for i in range(len(tokens)-200): tokens.pop()
-        tokenized.append(tokens)
-    return tokenized
+def tokenized_dataset(tokenizer, data):
+    input_ids = []
+    token_type_ids = []
+    attention_mask = []
+    dataset = dict()
+    max_length = 200
+    for text in data['text']:
+        encoded = tokenizer.encode(text)
+        encoded.pad(max_length)
+        encoded.truncate(max_length)
+        input_ids.append(encoded.ids)
+        token_type_ids.append(encoded.type_ids)
+        attention_mask.append(encoded.attention_mask)
+        
+    dataset['input_ids'] = torch.tensor(input_ids)
+    dataset['token_type_ids'] = torch.tensor(token_type_ids)
+    dataset['attention_mask'] = torch.tensor(attention_mask)
+    return dataset
 
 
 quotes = re.compile(r"[“”‘’\"\']")

@@ -27,13 +27,8 @@ class Model(nn.Module):
             kernel_size=6)
         self._init_weights(self.conv3)
 
-        self.fc = nn.Linear(
-            in_features=channel * 3,
-            out_features=channel,
-        )
-        self._init_weights(self.fc)
         self.classifier = nn.Linear(
-            in_features=channel * 4,
+            in_features=channel * 5,
             out_features=num_class)
         self._init_weights(self.classifier)
 
@@ -49,14 +44,11 @@ class Model(nn.Module):
         self.dropout2 = nn.Dropout(dropout2)
         
         self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-
-        self.AvgPool = nn.AdaptiveAvgPool1d(channel)
 
     def forward(self, input):
         """Forward."""
         # input size = (batch, max_seq)
-        if type(input[0][0].item())==float:
+        if type(input.tolist()[0][0])==float:
             input = torch.tensor(input.tolist(),dtype=torch.long)
 
         embd = self.embedding(input) # size = (batch, max_seq, embedding_dim)
@@ -65,9 +57,8 @@ class Model(nn.Module):
         
         lstm_output, (hn, cn) = self.lstm(embd) # size = (batch, max_seq, channel * 2)
         
-        lstm_output = torch.transpose(lstm_output, 0, 1)[-1] # size = (batch, channel * 2)
-        lstm_output = self.AvgPool(lstm_output)
-        
+        lstm_output = lstm_output[:,-1,:] # size = (batch, channel * 2)
+
         output1 = self.conv1(output) # size = (batch, embedding_dim, max_seq')
         output2 = self.conv2(output) # size = (batch, embedding_dim, max_seq'')
         output3 = self.conv3(output) # size = (batch, embedding_dim, max_seq''')
@@ -83,15 +74,15 @@ class Model(nn.Module):
         output1 = self.dropout2(self.relu(lm1(output1))) # size = (batch, channel, embedding_dim)
         output2 = self.dropout2(self.relu(lm2(output2)))
         output3 = self.dropout2(self.relu(lm3(output3)))
-
+        
         m1 = nn.MaxPool1d(output1.size(-1))
         m2 = nn.MaxPool1d(output2.size(-1))
         m3 = nn.MaxPool1d(output3.size(-1))
-        output1 = m1(output1).view(input.size(0), -1) # size = (batch, channel)
-        output2 = m2(output2).view(input.size(0), -1) # size = (batch, channel)
-        output3 = m3(output3).view(input.size(0), -1) # size = (batch, channel)
+        output1 = m1(output1).view(output1.size(0),-1) # size = (batch, channel)
+        output2 = m2(output2).view(output1.size(0),-1) # size = (batch, channel)
+        output3 = m3(output3).view(output1.size(0),-1) # size = (batch, channel)
 
-        output_cat = torch.concat((output1, output2, output3, lstm_output), 1) # size = (batch, channel * 4)
+        output_cat = torch.concat((output1, output2, output3, lstm_output), 1) # size = (batch, channel * 5)
 
         output = self.dropout(self.relu(output_cat))
 
@@ -123,12 +114,12 @@ class Model(nn.Module):
 if __name__ == "__main__":
     """Test"""
     print('='*25, 'Test', '='*25)
-    model = Model(vocab_size=50000, embedding_dim=8, channel=16, num_class=2, dropout1=0.1, dropout2=0.2, device=torch.device('cpu'))
+    model = Model(vocab_size=50000, embedding_dim=8, channel=16, num_class=2, dropout1=0.1, dropout2=0.2)
     model.to(torch.device('cpu'))
     print(model)
 
     # batch_size = 16, max_seq_length = 200
-    batch_size = 16
+    batch_size = 1
     input = torch.randint(low=0, high=50000, size=(batch_size, 200)).to(torch.device('cpu'))
     print('input', input.shape)
     

@@ -1,19 +1,22 @@
+"""
+    Reference:
+        https://github.com/kekmodel/MPL-pytorch
+"""
+
 import os
 import gc
+import math
 import random
 import pandas as pd
 import numpy as np
-from scipy.sparse import construct
 from sklearn.metrics import f1_score
-from sklearn.utils import shuffle
 
 import torch
-from torch import optim
+from torch.optim.lr_scheduler import LambdaLR
 import torch.nn.functional as F
 from torch.utils.data.dataloader import DataLoader
 from transformers import ElectraForSequenceClassification
 from tokenizers import BertWordPieceTokenizer
-from transformers.utils.dummy_pt_objects import get_polynomial_decay_schedule_with_warmup
 
 import modeling
 from utils import Config, set_seed, GOOGLE_APPLICATION_CREDENTIAL, MLFLOW_TRACKING_URI
@@ -26,10 +29,10 @@ from tqdm import trange, tqdm
 set_seed(42)
 
 config = Config(
-    dropout1=0,
-    dropout2=0,
+    dropout1=0.3,
+    dropout2=0.4,
     learning_rate=1e-3,
-    label_smoothing=0,
+    label_smoothing=0.0,
     epochs=50,
     embedding_dim=100,
     channel=128)
@@ -42,6 +45,66 @@ def seed_init_fn(x):
    torch.manual_seed(seed)
    return
 
+def get_cosine_schedule_with_warmup(optimizer,
+                                    num_warmup_steps,
+                                    num_training_steps,
+                                    num_wait_steps=0,
+                                    num_cycles=0.5,
+                                    last_epoch=-1):
+    def lr_lambda(current_step):
+        if current_step < num_wait_steps:
+            return 0.0
+
+        if current_step < num_warmup_steps + num_wait_steps:
+            return float(current_step) / float(max(1, num_warmup_steps + num_wait_steps))
+
+        progress = float(current_step - num_warmup_steps - num_wait_steps) / \
+            float(max(1, num_training_steps - num_warmup_steps - num_wait_steps))
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+
+    return LambdaLR(optimizer, lr_lambda, last_epoch)
+
+
+def punctuation2(dataset):
+    new_dataset = pd.DataFrame(columns=['text'])
+    punc = ['.',',',"'",';','/','-','~','!','@','?','^',' ']
+    for i in trange(len(dataset)):
+        text = dataset[i]
+        # 띄어쓰기 단위로 글자 랜덤으로 배열
+        t = text.split()
+        n_t = ''
+        for w in t:
+            if random.random() < 0.8: # 0.8 확률로 랜덤 배열
+                n_t = ' '.join([n_t, ''.join(random.sample(w, k=len(w)))])
+            else:
+                n_t = ' '.join([n_t, w])
+        text = n_t.strip()
+        
+        # 0.5 확률로 띄어쓰기 없애기 (길이 30 이하 텍스트만)
+        if 0 < len(text) <= 30 and random.random() < 0.5:
+            text = ''.join(text.split())
+        
+        if len(text)==0: text+='ㅋ'
+        # 랜덤으로 앞이나 뒤에 'ㅋㅋㅋ', 'ㅎㅎㅎ' 추가
+        if text[0] != 'ㅋ' and text[0] != 'ㅎ' and random.random() < 0.5:
+            add_front = random.choice(['ㅋㅋ', 'ㅋㅋㅋ', 'ㅎㅎ', 'ㅎㅎㅎ'])
+            text = ''.join([add_front, random.choice([' ', '']), text])
+            
+        if text[-1] != 'ㅋ' and text[-1] != 'ㅎ' and random.random() < 0.5:
+            add_last = random.choice(['ㅋㅋ', 'ㅋㅋㅋ', 'ㅎㅎ', 'ㅎㅎㅎ'])
+            text = ''.join([text, random.choice([' ', '']), add_last])
+            
+        # punctuation 추가
+        punc_size = random.randint(max(len(text)//10, 3), max(len(text)//5, 3))
+        text = list(text)
+        for _ in range(punc_size):
+            txt_rnd = random.randint(0, len(text)-1)
+            punc_rnd = random.randint(0, len(punc)-1)
+            text.insert(txt_rnd, punc[punc_rnd])
+        new_dataset = new_dataset.append(
+            dict(text=''.join(text).replace("  ", " ")), ignore_index=True)
+    return new_dataset
+
 
 def train(tokenizer, device) -> None:
     # Print Hyperparameters
@@ -51,28 +114,30 @@ def train(tokenizer, device) -> None:
     # Train Dataset
     df = pd.read_csv('labeled.csv')
     p_df = pd.read_csv('twitch.csv')
+    eval_df = pd.read_csv('test2.csv')
 
-    # pseudo labeling할 데이터 중 10만개를 샘플로 사용합니다.
+    # pseudo labeling할 데이터 중 2.8만개를 샘플로 사용합니다.
     true_label = p_df[(p_df['none']<p_df['curse'])==True]
     false_label = p_df.drop(true_label.index, axis=0).reset_index().drop(['index'], axis=1)
-    false_label = false_label.sample(frac=0.1, random_state=42)
-    true_label = true_label.reset_index().drop(['index'], axis=1)
+    false_label = false_label.sample(frac=0.025, random_state=42)
+    true_label = true_label.sample(frac=0.25)
     true_label = true_label.append(false_label)
     true_label = true_label.sample(frac=1, random_state=42).reset_index().drop(['index'], axis=1)
     p_df = true_label
-
-    # Augmentation
-    a_df = p_df
     
     # Test Dataset은 labeled dataset의 20%의 비율로 가져온다.(false/true ratio = 0.76)
-    eval_df = df.sample(frac=0.2, random_state=42).reset_index().drop(['index'], axis=1)
-    df = df.drop(eval_df.index).reset_index().drop(['index'], axis=1)
+    # eval_df = df.sample(frac=0.2, random_state=42).reset_index().drop(['index'], axis=1)
+    # df = df.drop(eval_df.index).reset_index().drop(['index'], axis=1)
 
-    df = punctuation(df)
-    a_df = punctuation(a_df)
+    # weak augmentation
+    p_df = punctuation(p_df)
+    
+    # strong augmentation
+    a_df = punctuation2(p_df['text'])
 
     labels = list(df['label'])
     eval_labels = list(eval_df['label'])
+    print(f'Test labels 0 : {eval_labels.count(0)}, 1 : {eval_labels.count(1)}')
 
     df = tokenized_dataset(tokenizer, df)
     p_df = tokenized_dataset(tokenizer, p_df)
@@ -89,11 +154,12 @@ def train(tokenizer, device) -> None:
     p_dataloader = DataLoader(p_dataset, batch_size=batch_size, shuffle=True, worker_init_fn=seed_init_fn)
     a_dataloader = DataLoader(a_dataset, batch_size=batch_size, shuffle=True, worker_init_fn=seed_init_fn)
     eval_dataloader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
+    
 
     # Load model
     teacher = ElectraForSequenceClassification.from_pretrained('jiho0304/curseELECTRA')
-
-    vocab_size = 30000
+    
+    vocab_size = 30000    
     print(f'vocab size = {vocab_size}')
     student = modeling.Model(
         vocab_size=vocab_size, 
@@ -106,9 +172,15 @@ def train(tokenizer, device) -> None:
     teacher.to(device)
     
     # Set teacher, student's optimizer
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer_s = torch.optim.AdamW(student.parameters(), lr=1e-5)
-    optimizer_t = torch.optim.AdamW(teacher.parameters(), lr=1e-5)
+    criterion = torch.nn.CrossEntropyLoss(label_smoothing=config.label_smoothing)
+    optimizer_s = torch.optim.SGD(student.parameters(), lr=1e-7)
+    optimizer_t = torch.optim.SGD(teacher.parameters(), lr=1e-7)
+    scaler_s = torch.cuda.amp.GradScaler()
+    scaler_t = torch.cuda.amp.GradScaler()
+    scheduler_t = get_cosine_schedule_with_warmup(
+        optimizer=optimizer_t, num_warmup_steps=0, num_training_steps=len(p_dataloader))
+    scheduler_s = get_cosine_schedule_with_warmup(
+        optimizer=optimizer_s, num_warmup_steps=0, num_training_steps=len(p_dataloader))
 
     # Meta Pseudo Labeling
     print('------Start Training------')
@@ -116,10 +188,12 @@ def train(tokenizer, device) -> None:
     torch.cuda.empty_cache()
     gc.collect()
 
-    best_acc = 0
-    dataset_iter, p_dataset_iter = 0, 0
-    for step in trange(len(p_dataloader) * 5): # 5 epochs
+    best_f1 = 0
+    prev_f1, patient = -1, 0
+    for step in trange(len(p_dataloader)):
         teacher.train()
+        # if os.path.exists('./save/meta_pseudo/result_temp.pt'):
+        #     student.load_state_dict(torch.load('./save/meta_pseudo/result_temp.pt'))
         student.train()
 
         labeled = next(iter(dataloader))
@@ -138,64 +212,74 @@ def train(tokenizer, device) -> None:
         # reference의 weak augmentation을 unlabeled dataset으로 가정
         u_input = unlabeled['input_ids']
         u_attention_mask = unlabeled['attention_mask']
-
-        # teacher model에 먹일 input 구성 (labeled, augmention, unlabeled)
-        t_input_ids = torch.cat((l_input, a_input, u_input)).to(device)
-        t_attention_mask = torch.cat((l_attention_mask, a_attention_mask, u_attention_mask)).to(device)
         
-        t_logits = teacher(input_ids=t_input_ids, attention_mask=t_attention_mask)['logits']
-        t_logits_l = t_logits[:batch_size]
-        t_logits_a, t_logits_u = t_logits[batch_size:].chunk(2)
+        with torch.cuda.amp.autocast():
+            # teacher model에 먹일 input 구성 (labeled, augmention, unlabeled)
+            t_input_ids = torch.cat((l_input, a_input, u_input)).to(device)
+            t_attention_mask = torch.cat((l_attention_mask, a_attention_mask, u_attention_mask)).to(device)
+
+            t_logits = teacher(input_ids=t_input_ids, attention_mask=t_attention_mask)['logits']
+
+            t_logits_l = t_logits[:batch_size]
+            t_logits_a, t_logits_u = t_logits[batch_size:].chunk(2)
         
-        # teacher모델의 labeled data에 대한 loss
-        t_loss_l = criterion(t_logits_l, targets)
+            # teacher모델의 labeled data에 대한 loss
+            t_loss_l = criterion(t_logits_l, targets)
 
-        # augmentation을 통한 data의 label과 unlabeled data의 로스의 비교(unlabeled data로부터 증강되었기 때문)
-        soft_pseudo_label = torch.softmax(t_logits_u.detach(), dim=-1)
-        max_probs, hard_pseudo_label = torch.max(soft_pseudo_label, dim=-1)
-        mask = max_probs.ge(0.70).float()
-        t_loss_u = torch.mean( # KL.Div loss
-            -(soft_pseudo_label * torch.log_softmax(t_logits_a, dim=-1)).sum(dim=-1) * mask
-        )
-        weight_u = 1 * min(1., (step+1)/1) # lambda-u, uda_step
-        t_loss_uda = t_loss_l + weight_u * t_loss_u
+            # augmentation을 통한 data의 label과 unlabeled data의 로스의 비교(unlabeled data로부터 증강되었기 때문)
+            soft_pseudo_label = torch.softmax(t_logits_u.detach()/0.9, dim=-1) # temperature
+            max_probs, hard_pseudo_label = torch.max(soft_pseudo_label, dim=-1)
+            mask = max_probs.ge(0.60).float()
+            t_loss_u = torch.mean( # KL.Div loss
+                -(soft_pseudo_label * torch.log_softmax(t_logits_a, dim=-1)).sum(dim=-1) * mask
+            )
+            weight_u = 1 * min(1., (step+1)/1) # lambda-u, uda_step
+            t_loss_uda = t_loss_l + weight_u * t_loss_u
 
-        # student model에 먹일 input 구성 (labeled, augmention)
-        s_input_ids = torch.cat((l_input, a_input)).to(device)
-        s_logits = student(s_input_ids)
-        s_logits_l, s_logits_a = s_logits[:batch_size], s_logits[batch_size:]
+            # student model에 먹일 input 구성 (labeled, augmention)
+            s_input_ids = torch.cat((l_input, a_input)).to(device)
 
-        # 업데이트 되지 않은 student 모델의 labeled data에 대한 로스값(labeled data에 대한 validation)
-        s_loss_l_old = F.cross_entropy(s_logits_l.detach(), targets)
-        
-        # augmented data에 대해서 student가 학습
-        s_loss = criterion(s_logits_a, hard_pseudo_label)
+            s_logits = student(s_input_ids)
+            s_logits = F.sigmoid(s_logits)
+            s_logits_l, s_logits_a = s_logits[:batch_size], s_logits[batch_size:]
 
-        s_loss.backward()
-        optimizer_s.step()
+            # 업데이트 되지 않은 student 모델의 labeled data에 대한 로스값(labeled data에 대한 validation)
+            s_loss_l_old = F.cross_entropy(s_logits_l.detach(), targets)
+            
+            # augmented data에 대해서 student가 학습
+            s_loss = criterion(s_logits_a, hard_pseudo_label)
 
-        # 업데이트 된 student 모델의 labeled data에 대한 로스
-        with torch.no_grad():
-            s_logits_l = student(l_input.to(device))
-        s_loss_l_new = F.cross_entropy(s_logits_l.detach(), targets)
+        scaler_s.scale(s_loss).backward()
+        scaler_s.step(optimizer_s)
+        scaler_s.update()
+        scheduler_s.step()
 
-        # teacher coefficient : https://github.com/kekmodel/MPL-pytorch/issues/6
-        dot_product = s_loss_l_old - s_loss_l_new
+        with torch.cuda.amp.autocast():
+            # 업데이트 된 student 모델의 labeled data에 대한 로스
+            with torch.no_grad():
+                s_logits_l = student(l_input.to(device))
+                s_logits_l = F.sigmoid(s_logits_l)
+                s_loss_l_new = F.cross_entropy(s_logits_l.detach(), targets)
+            
+            # teacher coefficient : https://github.com/kekmodel/MPL-pytorch/issues/6
+            dot_product = s_loss_l_old - s_loss_l_new
 
-        # compute the teacher's gradient from student's feedback
-        _, hard_pseudo_label = torch.max(t_logits_a.detach(), dim=-1)
-        t_loss_mpl = dot_product * F.cross_entropy(t_logits_a, hard_pseudo_label)
-        
-        t_loss = t_loss_uda + t_loss_mpl # t_loss_uda = t_loss_l + t_loss_unlabeled
+            # compute the teacher's gradient from student's feedback
+            _, hard_pseudo_label = torch.max(t_logits_a.detach(), dim=-1)
+            t_loss_mpl = dot_product * F.cross_entropy(t_logits_a, hard_pseudo_label)
+            
+            t_loss = t_loss_uda + t_loss_mpl # t_loss_uda = t_loss_l + t_loss_unlabeled
 
-        t_loss.backward()
-        optimizer_t.step()
+        scaler_t.scale(t_loss).backward()
+        scaler_t.step(optimizer_t)
+        scaler_t.update()
+        scheduler_t.step()
 
         teacher.zero_grad()
         student.zero_grad()
     
         # step마다 Evalution 진행
-        if step % 10000 == 0:
+        if step > 0 and step % 10 == 0:
             student.eval()
             correct, loss = 0, 0
             zero, one = 0, 0
@@ -219,13 +303,95 @@ def train(tokenizer, device) -> None:
             # mlflow.log_metric('eval loss', loss/len(eval_dataloader))
             # mlflow.log_metric('Acc', correct.item()/len(eval_dataset))
 
-            eval_acc = correct/len(eval_dataloader)
-            if eval_acc > best_acc:
-                torch.save(student.state_dict(), f'./save/meta_pseudo/result.pt')
+            if eval_f1 > best_f1:
+                torch.save(student.state_dict(), f'./save/meta_pseudo/result_temp.pt')
                 # mlflow.pytorch.log_model(student, 'model', registered_model_name="ToxicityText")
-                best_acc = eval_acc
+                best_f1 = eval_f1
+        
+            if prev_f1 == eval_f1:
+                patient += 1
+                if patient == 20:
+                    break
+            else:
+                patient = 0
+            prev_f1 = eval_f1
 
-    print(f'best f1 = {eval_f1}')
+    print(f'best f1 = {best_f1}')
+
+def finetune(tokenizer, device):
+    df = pd.read_csv('labeled.csv')
+    eval_df = pd.read_csv('test2.csv')
+    
+    labels = list(df['label'])
+    eval_labels = list(eval_df['label'])
+
+    df = punctuation(df)
+    
+    df = tokenized_dataset(tokenizer, df)
+    eval_df = tokenized_dataset(tokenizer, eval_df)
+    
+    dataset = load_dataset(df, labels)
+    eval_dataset = load_dataset(eval_df, eval_labels)
+    
+    batch_size = 32
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
+    
+    epochs = 10
+    model = modeling.Model(
+        vocab_size=30000,
+        embedding_dim=100,
+        channel=128,
+        num_class=2,
+        dropout1=0.3,
+        dropout2=0.4
+    )
+    model.load_state_dict(torch.load('./save/meta_pseudo/result_temp.pt'))
+    criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer=optimizer,
+        epochs = epochs,
+        max_lr=0.01,
+        steps_per_epoch=len(dataloader),
+        pct_start=0.1,
+    )
+    model.to(device)
+    for epoch in range(epochs):
+        running_loss = 0
+        model.train()
+        for i, labeled in enumerate(dataloader):
+            input = labeled['input_ids'].to(device)
+            label = labeled['label'].to(device)
+
+            output = model(input)
+            loss = criterion(output, label)
+            running_loss += loss.item()
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+        
+        with torch.no_grad():
+            # Evalutaion
+            model.eval()
+            correct = 0
+            prediction = []
+            for j, batch in enumerate(eval_dataloader):
+                input = batch['input_ids'].cuda()
+                label = batch['label'].cuda()
+                
+                output = model(input)
+                preds = output.argmax(-1)
+                prediction += preds.tolist()
+                correct += (preds==label).sum().item()
+            
+            eval_acc = correct/len(eval_dataset)
+            f1 = f1_score(eval_labels, prediction, average='macro')
+
+        print(f'Epoch: {epoch+1} | Train Loss : {running_loss/len(dataloader):.5f} | Acc : {eval_acc:.5f} | F1 : {f1:.3f}')
+
 
 if __name__ == "__main__":
     # device
@@ -236,3 +402,4 @@ if __name__ == "__main__":
     tokenizer = BertWordPieceTokenizer('./vocab_3.txt', lowercase=False)
     
     train(tokenizer, device)
+    # finetune(tokenizer, device)
