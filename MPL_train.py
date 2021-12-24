@@ -362,5 +362,6 @@ if __name__ == "__main__":
     # load tokenizer
     tokenizer = BertWordPieceTokenizer('./vocab_3.txt', lowercase=False)
     
+    # MPL 수행 후 labeled data에 대해 finetuning을 시도합니다
     train(tokenizer, device)
-    # finetune(tokenizer, device)
+    finetune(tokenizer, device)
