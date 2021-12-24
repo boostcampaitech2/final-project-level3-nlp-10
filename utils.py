@@ -28,7 +28,7 @@ class Config:
         self.embedding_dim = embedding_dim
         self.channel = channel
 
-def set_seed(random_seed):
+def set_seed(random_seed) -> None:
     torch.manual_seed(random_seed)
     torch.cuda.manual_seed(random_seed)
     torch.cuda.manual_seed_all(random_seed)  # if use multi-GPU
