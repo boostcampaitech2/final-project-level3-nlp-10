@@ -20,7 +20,7 @@ from tokenizers import BertWordPieceTokenizer
 
 import modeling
 from utils import Config, set_seed, GOOGLE_APPLICATION_CREDENTIAL, MLFLOW_TRACKING_URI
-from data import load_dataset, punctuation, tokenized_dataset
+from data import load_dataset, punctuation, punctuation2, tokenized_dataset
 from tqdm import trange, tqdm
 
 # os.environ['GOOGLE_APPLICATION_CREDENTIALS']=GOOGLE_APPLICATION_CREDENTIAL
@@ -63,47 +63,6 @@ def get_cosine_schedule_with_warmup(optimizer,
         return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
 
     return LambdaLR(optimizer, lr_lambda, last_epoch)
-
-
-def punctuation2(dataset):
-    new_dataset = pd.DataFrame(columns=['text'])
-    punc = ['.',',',"'",';','/','-','~','!','@','?','^',' ']
-    for i in trange(len(dataset)):
-        text = dataset[i]
-        # 띄어쓰기 단위로 글자 랜덤으로 배열
-        t = text.split()
-        n_t = ''
-        for w in t:
-            if random.random() < 0.8: # 0.8 확률로 랜덤 배열
-                n_t = ' '.join([n_t, ''.join(random.sample(w, k=len(w)))])
-            else:
-                n_t = ' '.join([n_t, w])
-        text = n_t.strip()
-        
-        # 0.5 확률로 띄어쓰기 없애기 (길이 30 이하 텍스트만)
-        if 0 < len(text) <= 30 and random.random() < 0.5:
-            text = ''.join(text.split())
-        
-        if len(text)==0: text+='ㅋ'
-        # 랜덤으로 앞이나 뒤에 'ㅋㅋㅋ', 'ㅎㅎㅎ' 추가
-        if text[0] != 'ㅋ' and text[0] != 'ㅎ' and random.random() < 0.5:
-            add_front = random.choice(['ㅋㅋ', 'ㅋㅋㅋ', 'ㅎㅎ', 'ㅎㅎㅎ'])
-            text = ''.join([add_front, random.choice([' ', '']), text])
-            
-        if text[-1] != 'ㅋ' and text[-1] != 'ㅎ' and random.random() < 0.5:
-            add_last = random.choice(['ㅋㅋ', 'ㅋㅋㅋ', 'ㅎㅎ', 'ㅎㅎㅎ'])
-            text = ''.join([text, random.choice([' ', '']), add_last])
-            
-        # punctuation 추가
-        punc_size = random.randint(max(len(text)//10, 3), max(len(text)//5, 3))
-        text = list(text)
-        for _ in range(punc_size):
-            txt_rnd = random.randint(0, len(text)-1)
-            punc_rnd = random.randint(0, len(punc)-1)
-            text.insert(txt_rnd, punc[punc_rnd])
-        new_dataset = new_dataset.append(
-            dict(text=''.join(text).replace("  ", " ")), ignore_index=True)
-    return new_dataset
 
 
 def train(tokenizer, device) -> None:

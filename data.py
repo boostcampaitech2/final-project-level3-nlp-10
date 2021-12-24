@@ -1,8 +1,10 @@
+import re
+import random
+import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import Dataset
 from tqdm import trange
-import numpy as np
-import re
     
     
 class load_dataset(Dataset):
@@ -47,6 +49,47 @@ def punctuation(dataset):
         dataset['text'][i] = ''.join(text)
     
     return dataset
+
+def punctuation2(dataset):
+    new_dataset = pd.DataFrame(columns=['text'])
+    punc = ['.',',',"'",';','/','-','~','!','@','?','^',' ']
+    for i in trange(len(dataset)):
+        text = dataset[i]
+        # 띄어쓰기 단위로 글자 랜덤으로 배열
+        t = text.split()
+        n_t = ''
+        for w in t:
+            if random.random() < 0.8: # 0.8 확률로 랜덤 배열
+                n_t = ' '.join([n_t, ''.join(random.sample(w, k=len(w)))])
+            else:
+                n_t = ' '.join([n_t, w])
+        text = n_t.strip()
+        
+        # 0.5 확률로 띄어쓰기 없애기 (길이 30 이하 텍스트만)
+        if 0 < len(text) <= 30 and random.random() < 0.5:
+            text = ''.join(text.split())
+        
+        if len(text)==0: text+='ㅋ'
+        # 랜덤으로 앞이나 뒤에 'ㅋㅋㅋ', 'ㅎㅎㅎ' 추가
+        if text[0] != 'ㅋ' and text[0] != 'ㅎ' and random.random() < 0.5:
+            add_front = random.choice(['ㅋㅋ', 'ㅋㅋㅋ', 'ㅎㅎ', 'ㅎㅎㅎ'])
+            text = ''.join([add_front, random.choice([' ', '']), text])
+            
+        if text[-1] != 'ㅋ' and text[-1] != 'ㅎ' and random.random() < 0.5:
+            add_last = random.choice(['ㅋㅋ', 'ㅋㅋㅋ', 'ㅎㅎ', 'ㅎㅎㅎ'])
+            text = ''.join([text, random.choice([' ', '']), add_last])
+            
+        # punctuation 추가
+        punc_size = random.randint(max(len(text)//10, 3), max(len(text)//5, 3))
+        text = list(text)
+        for _ in range(punc_size):
+            txt_rnd = random.randint(0, len(text)-1)
+            punc_rnd = random.randint(0, len(punc)-1)
+            text.insert(txt_rnd, punc[punc_rnd])
+        new_dataset = new_dataset.append(
+            dict(text=''.join(text).replace("  ", " ")), ignore_index=True)
+    return new_dataset
+
 
 def tokenized_dataset(tokenizer, data):
     input_ids = []
