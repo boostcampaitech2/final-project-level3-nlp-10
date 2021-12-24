@@ -1,9 +1,13 @@
+"""
+    Config 클래스나 랜덤 시드를 고정하는 코드.
+    환경변수 값들도 포함합니다.
+"""
 import random
 import numpy as np
 import torch
 
-GOOGLE_APPLICATION_CREDENTIAL = './credential.json'
-MLFLOW_TRACKING_URI = 'http://35.209.140.113/'
+GOOGLE_APPLICATION_CREDENTIAL = './credential.json' # GCP 서비스 접근을 위한 파일
+MLFLOW_TRACKING_URI = 'http://localhost:80' # GCP 서버 주소
 
 class Config:
     def __init__(

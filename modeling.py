@@ -1,3 +1,7 @@
+"""
+    CNN-LSTM 모델
+"""
+
 import torch
 import torch.nn as nn
 
@@ -48,6 +52,7 @@ class Model(nn.Module):
     def forward(self, input):
         """Forward."""
         # input size = (batch, max_seq)
+        # MLflow에서 강제로 float으로 형변환하기 때문에 float인경우 long타입으로 변환해야 합니다.
         if type(input.tolist()[0][0])==float:
             input = torch.tensor(input.tolist(),dtype=torch.long)
 
@@ -64,7 +69,7 @@ class Model(nn.Module):
         output3 = self.conv3(output) # size = (batch, embedding_dim, max_seq''')
         
         # layer normalization and activation
-        device = torch.device('cuda') if self.embedding.weight.is_cuda else torch.device('cpu')
+        device = torch.device('cuda') if self.embedding.weight.is_cuda else torch.device('cpu') # model의 위치(cpu or gpu)를 판단
         lm1 = nn.LayerNorm(output1.size()[-1]).to(device)
         lm2 = nn.LayerNorm(output2.size()[-1]).to(device)
         lm3 = nn.LayerNorm(output3.size()[-1]).to(device)
@@ -90,8 +95,11 @@ class Model(nn.Module):
 
 
     def _init_weights(self, module):
-        """Initialize the weights with bert"""
-        """Reference : huggingface.co"""
+        """
+            허깅페이스에서 사용하는 initialization 코드를 적용합니다. 
+            torch에서 각 모듈에 대해 다른 initialization을 같은 분포로 해주는 역할을 합니다.
+            Reference : https://github.com/huggingface
+        """
         if isinstance(module, nn.Conv1d):
             module.weight.data.normal_(mean=0.0, std=0.02)
             if module.bias is not None:
@@ -111,14 +119,18 @@ class Model(nn.Module):
             module.weight.data.fill_(1.0)  
 
 
+
 if __name__ == "__main__":
-    """Test"""
+    """
+        Test code
+        모델이 주어진 input에 정상적으로 돌아가는지 확인하는 코드입니다.
+    """
     print('='*25, 'Test', '='*25)
     model = Model(vocab_size=50000, embedding_dim=8, channel=16, num_class=2, dropout1=0.1, dropout2=0.2)
     model.to(torch.device('cpu'))
     print(model)
 
-    # batch_size = 16, max_seq_length = 200
+    # batch_size = 1, max_seq_length = 200
     batch_size = 1
     input = torch.randint(low=0, high=50000, size=(batch_size, 200)).to(torch.device('cpu'))
     print('input', input.shape)

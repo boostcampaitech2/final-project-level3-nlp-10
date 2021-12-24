@@ -1,5 +1,10 @@
+"""
+    데이터 전처리와 데이터셋을 구성하는 코드입니다.
+"""
+
 import re
 import random
+from typing import Dict
 import numpy as np
 import pandas as pd
 import torch
@@ -13,7 +18,7 @@ class load_dataset(Dataset):
         self.dataset = dataset
         self.labels = labels
 
-    def __getitem__(self, idx) -> dict:
+    def __getitem__(self, idx) -> Dict:
         if self.labels == None:
             item = dict(
                 input_ids=self.dataset['input_ids'][idx], 
@@ -29,16 +34,15 @@ class load_dataset(Dataset):
         return len(self.dataset['input_ids'])
 
 
-def punctuation(dataset):
-    """punctuation preprocessing."""
-    """텍스트 길이의 10%를 punctuation 삽입하여 모델이 robust하도록 한다."""
+def punctuation(dataset) -> pd.DataFrame:
+    """punctuation를 단어 사이에 삽입. Weak augmentation"""""
     punc = ['.',',','!','@','~','?','*','^','%']
     for i in trange(len(dataset)):
         text = dataset['text'][i].split()
 
-        if len(text) < 6: continue
+        if len(text) < 6: continue # 텍스트 길이가 너무 짧은 경우 건너뛴다
 
-        punc_size = max(round(len(text) * 0.1), 3) # 텍스트가 짧은 경우 3개만 들어가도록
+        punc_size = max(round(len(text) * 0.1), 3) # 텍스트가 짧은 경우 3개만 들어가도록 한다
 
         text_rnd = torch.randint(low=0, high=len(text)-1, size=(1,punc_size)).tolist()[0]
         punc_rnd = torch.randint(low=0, high=len(punc), size=(1,punc_size)).tolist()[0]
@@ -50,7 +54,9 @@ def punctuation(dataset):
     
     return dataset
 
-def punctuation2(dataset):
+
+def punctuation2(dataset) -> pd.DataFrame:
+    """punctuation을 글자 사이에 삽입 + 단어 순서를 뒤바꾸거나 띄어쓰기 제거. Strong augmentation"""
     new_dataset = pd.DataFrame(columns=['text'])
     punc = ['.',',',"'",';','/','-','~','!','@','?','^',' ']
     for i in trange(len(dataset)):
@@ -88,10 +94,12 @@ def punctuation2(dataset):
             text.insert(txt_rnd, punc[punc_rnd])
         new_dataset = new_dataset.append(
             dict(text=''.join(text).replace("  ", " ")), ignore_index=True)
+    
     return new_dataset
 
 
-def tokenized_dataset(tokenizer, data):
+def tokenized_dataset(tokenizer, data) -> dict:
+    """BertWordPieceTokenizer의 사용으로 dict(input_ids, token_type_ids, attention_mask) 리턴"""
     input_ids = []
     token_type_ids = []
     attention_mask = []
@@ -111,6 +119,7 @@ def tokenized_dataset(tokenizer, data):
     return dataset
 
 
+# 전처리를 위한 정규식 컴파일
 quotes = re.compile(r"[“”‘’\"\']")
 l_bracket = re.compile(r"[〈<＜「≪《『]")
 r_bracket = re.compile(r"[〉>＞」≫》』]")
@@ -120,7 +129,8 @@ exclamation = re.compile(r'[!¡！]+')
 remainders = re.compile(r"([^\-—_=+,\./<>?\[\]{};:\'\"!@#$%\^&*\(\)₩`´~\|\\ㄱ-ㅎㅏ-ㅣ가-힣a-zA-Z0-9ぁ-ゔゞァ-・ヽヾ゛゜ー一-龯\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\s]+)")
 multiple_spaces = re.compile(r"\s+")
 
-def preprocessing(dataset):
+
+def preprocessing(dataset) -> pd.DataFrame:
     """
     dataset은 pd.DataFrame 형식으로 첫번째 column이 'text'인 경우를 상정하고 만들었습니다.
     """

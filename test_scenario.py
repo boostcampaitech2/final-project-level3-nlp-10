@@ -1,9 +1,13 @@
+"""
+    배포된 모델 테스트틀 위한 테스트코드
+    원하는 시나리오를 적용해서 모델 결과를 알 수 있습니다.
+"""
+
 # ignore warning : pytest --p no:warnings
 # Model input, output test
 import os
 import mlflow
 import numpy as np
-import torch
 from tokenizers import BertWordPieceTokenizer
 from utils import GOOGLE_APPLICATION_CREDENTIAL, MLFLOW_TRACKING_URI
 

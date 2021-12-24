@@ -1,8 +1,7 @@
 """
-    Reference:
-        https://github.com/kekmodel/MPL-pytorch
+    Meta Pseudo Labeling이 구현된 코드입니다.
+    Reference: https://github.com/kekmodel/MPL-pytorch
 """
-
 import os
 import gc
 import math
@@ -23,8 +22,9 @@ from utils import Config, set_seed, GOOGLE_APPLICATION_CREDENTIAL, MLFLOW_TRACKI
 from data import load_dataset, punctuation, punctuation2, tokenized_dataset
 from tqdm import trange, tqdm
 
-# os.environ['GOOGLE_APPLICATION_CREDENTIALS']=GOOGLE_APPLICATION_CREDENTIAL
-# os.environ['MLFLOW_TRACKING_URI']=MLFLOW_TRACKING_URI
+# MLFlow 추적을 위한 설정
+os.environ['GOOGLE_APPLICATION_CREDENTIALS']=GOOGLE_APPLICATION_CREDENTIAL
+os.environ['MLFLOW_TRACKING_URI']=MLFLOW_TRACKING_URI
 
 set_seed(42)
 
@@ -83,10 +83,6 @@ def train(tokenizer, device) -> None:
     true_label = true_label.append(false_label)
     true_label = true_label.sample(frac=1, random_state=42).reset_index().drop(['index'], axis=1)
     p_df = true_label
-    
-    # Test Dataset은 labeled dataset의 20%의 비율로 가져온다.(false/true ratio = 0.76)
-    # eval_df = df.sample(frac=0.2, random_state=42).reset_index().drop(['index'], axis=1)
-    # df = df.drop(eval_df.index).reset_index().drop(['index'], axis=1)
 
     # weak augmentation
     p_df = punctuation(p_df)
@@ -115,7 +111,7 @@ def train(tokenizer, device) -> None:
     eval_dataloader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
     
 
-    # Load model
+    # Load teacher model(pretrained), studentmodel
     teacher = ElectraForSequenceClassification.from_pretrained('jiho0304/curseELECTRA')
     
     vocab_size = 30000    
@@ -141,6 +137,7 @@ def train(tokenizer, device) -> None:
     scheduler_s = get_cosine_schedule_with_warmup(
         optimizer=optimizer_s, num_warmup_steps=0, num_training_steps=len(p_dataloader))
 
+
     # Meta Pseudo Labeling
     print('------Start Training------')
 
@@ -151,8 +148,6 @@ def train(tokenizer, device) -> None:
     prev_f1, patient = -1, 0
     for step in trange(len(p_dataloader)):
         teacher.train()
-        # if os.path.exists('./save/meta_pseudo/result_temp.pt'):
-        #     student.load_state_dict(torch.load('./save/meta_pseudo/result_temp.pt'))
         student.train()
 
         labeled = next(iter(dataloader))
@@ -259,12 +254,10 @@ def train(tokenizer, device) -> None:
 
             eval_f1 = f1_score(eval_labels, prediction, average='macro')
             print(f'Epoch: {step+1} | Train Loss : {loss/len(eval_dataloader):.5f} | Test Acc : {correct/len(eval_dataset):.5f} | Zero : {zero} | One : {one} | F1 : {eval_f1:.5f}')
-            # mlflow.log_metric('eval loss', loss/len(eval_dataloader))
-            # mlflow.log_metric('Acc', correct.item()/len(eval_dataset))
 
             if eval_f1 > best_f1:
+                # 가장 좋을 때의 모델을 저장합니다.
                 torch.save(student.state_dict(), f'./save/meta_pseudo/result_temp.pt')
-                # mlflow.pytorch.log_model(student, 'model', registered_model_name="ToxicityText")
                 best_f1 = eval_f1
         
             if prev_f1 == eval_f1:
@@ -277,7 +270,12 @@ def train(tokenizer, device) -> None:
 
     print(f'best f1 = {best_f1}')
 
+
 def finetune(tokenizer, device):
+    """
+        MPL이 적용된 student 모델을 다시 labeled data로 Fine tuning합니다.
+    """
+    # Load datasets
     df = pd.read_csv('labeled.csv')
     eval_df = pd.read_csv('test2.csv')
     
@@ -296,6 +294,7 @@ def finetune(tokenizer, device):
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     eval_dataloader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
     
+    # Load model
     epochs = 10
     model = modeling.Model(
         vocab_size=30000,
@@ -306,6 +305,9 @@ def finetune(tokenizer, device):
         dropout2=0.4
     )
     model.load_state_dict(torch.load('./save/meta_pseudo/result_temp.pt'))
+    model.to(device)
+
+    # Set criterion, optimizer, scheduler
     criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.5)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -315,7 +317,7 @@ def finetune(tokenizer, device):
         steps_per_epoch=len(dataloader),
         pct_start=0.1,
     )
-    model.to(device)
+    
     for epoch in range(epochs):
         running_loss = 0
         model.train()
