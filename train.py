@@ -377,13 +377,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # # device
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # print(f'device = {device}')
+    # device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f'device = {device}')
 
-    # # load tokenizer
-    # tokenizer = BertWordPieceTokenizer('./vocab.txt', lowercase=False)
+    # load tokenizer
+    tokenizer = BertWordPieceTokenizer('./vocab.txt', lowercase=False)
     
-    # # MPL 수행 후 labeled data에 대해 finetuning을 시도합니다
-    # train(args, tokenizer, device)
-    # finetune(args, tokenizer, device)
+    # MPL 수행 후 labeled data에 대해 finetuning을 시도합니다
+    train(args, tokenizer, device)
+    finetune(args, tokenizer, device)
