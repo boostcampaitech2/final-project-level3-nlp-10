@@ -14,19 +14,17 @@ class Config:
         self,
         dropout1 : float, 
         dropout2 : float, 
-        learning_rate : float, 
         label_smoothing : float, 
         epochs: int, 
         embedding_dim: int, 
-        channel: int
+        hidden_size: int
         ) -> None:
         self.dropout1 = dropout1
         self.dropout2 = dropout2
-        self.learning_rate = learning_rate
         self.label_smoothing = label_smoothing
         self.epochs = epochs
         self.embedding_dim = embedding_dim
-        self.channel = channel
+        self.hidden_size = hidden_size
 
 def set_seed(random_seed) -> None:
     torch.manual_seed(random_seed)

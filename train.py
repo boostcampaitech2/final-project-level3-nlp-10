@@ -2,12 +2,13 @@
     Meta Pseudo Labeling이 구현된 코드입니다.
     Reference: https://github.com/kekmodel/MPL-pytorch
 """
-import os
 import gc
 import math
 import random
+import argparse
 import pandas as pd
 import numpy as np
+from torch.cuda import default_stream
 from sklearn.metrics import f1_score
 
 import torch
@@ -18,25 +19,11 @@ from transformers import ElectraForSequenceClassification
 from tokenizers import BertWordPieceTokenizer
 
 import modeling
-from utils import Config, set_seed, GOOGLE_APPLICATION_CREDENTIAL, MLFLOW_TRACKING_URI
+from utils import Config, set_seed
 from data import load_dataset, punctuation, punctuation2, tokenized_dataset
 from tqdm import trange, tqdm
 
-# MLFlow 추적을 위한 설정
-os.environ['GOOGLE_APPLICATION_CREDENTIALS']=GOOGLE_APPLICATION_CREDENTIAL
-os.environ['MLFLOW_TRACKING_URI']=MLFLOW_TRACKING_URI
-
 set_seed(42)
-
-config = Config(
-    dropout1=0.3,
-    dropout2=0.4,
-    learning_rate=1e-3,
-    label_smoothing=0.0,
-    epochs=50,
-    embedding_dim=100,
-    channel=128)
-
 
 def seed_init_fn(x):
    seed = 42 + x
@@ -65,10 +52,17 @@ def get_cosine_schedule_with_warmup(optimizer,
     return LambdaLR(optimizer, lr_lambda, last_epoch)
 
 
-def train(tokenizer, device) -> None:
+def train(args, tokenizer, device) -> None:
+    config = Config(
+        dropout1=args.dropout1,
+        dropout2=args.dropout2,
+        label_smoothing=args.label_smoothing,
+        epochs=args.epochs,
+        embedding_dim=args.embedding_dim,
+        hidden_size=args.hidden_size)
+    
     # Print Hyperparameters
     print(f'config : {config.__dict__}')
-    # mlflow.log_params(config.__dict__)
 
     # Train Dataset
     df = pd.read_csv('labeled.csv')
@@ -114,12 +108,12 @@ def train(tokenizer, device) -> None:
     # Load teacher model(pretrained), studentmodel
     teacher = ElectraForSequenceClassification.from_pretrained('jiho0304/curseELECTRA')
     
-    vocab_size = 30000    
+    vocab_size = args.vocab_size    
     print(f'vocab size = {vocab_size}')
     student = modeling.Model(
         vocab_size=vocab_size, 
         embedding_dim=config.embedding_dim, 
-        channel=config.channel, 
+        hidden_size=config.hidden_size, 
         num_class=2,
         dropout1=config.dropout1,
         dropout2=config.dropout2)
@@ -128,8 +122,8 @@ def train(tokenizer, device) -> None:
     
     # Set teacher, student's optimizer
     criterion = torch.nn.CrossEntropyLoss(label_smoothing=config.label_smoothing)
-    optimizer_s = torch.optim.SGD(student.parameters(), lr=1e-7)
-    optimizer_t = torch.optim.SGD(teacher.parameters(), lr=1e-7)
+    optimizer_s = torch.optim.SGD(student.parameters(), lr=args.teacher_learning_rate)
+    optimizer_t = torch.optim.SGD(teacher.parameters(), lr=args.student_learning_rate)
     scaler_s = torch.cuda.amp.GradScaler()
     scaler_t = torch.cuda.amp.GradScaler()
     scheduler_t = get_cosine_schedule_with_warmup(
@@ -146,7 +140,7 @@ def train(tokenizer, device) -> None:
 
     best_f1 = 0
     prev_f1, patient = -1, 0
-    for step in trange(len(p_dataloader)):
+    for step in trange(len(p_dataloader) * args.epochs):
         teacher.train()
         student.train()
 
@@ -181,13 +175,13 @@ def train(tokenizer, device) -> None:
             t_loss_l = criterion(t_logits_l, targets)
 
             # augmentation을 통한 data의 label과 unlabeled data의 로스의 비교(unlabeled data로부터 증강되었기 때문)
-            soft_pseudo_label = torch.softmax(t_logits_u.detach()/0.9, dim=-1) # temperature
+            soft_pseudo_label = torch.softmax(t_logits_u.detach()/args.temperature, dim=-1)
             max_probs, hard_pseudo_label = torch.max(soft_pseudo_label, dim=-1)
-            mask = max_probs.ge(0.60).float()
+            mask = max_probs.ge(args.threshold).float()
             t_loss_u = torch.mean( # KL.Div loss
                 -(soft_pseudo_label * torch.log_softmax(t_logits_a, dim=-1)).sum(dim=-1) * mask
             )
-            weight_u = 1 * min(1., (step+1)/1) # lambda-u, uda_step
+            weight_u = args.uda_lambda * min(1., (step+1)/args.uda_step) # lambda-u, uda_step
             t_loss_uda = t_loss_l + weight_u * t_loss_u
 
             # student model에 먹일 input 구성 (labeled, augmention)
@@ -262,7 +256,7 @@ def train(tokenizer, device) -> None:
         
             if prev_f1 == eval_f1:
                 patient += 1
-                if patient == 20:
+                if patient == args.patient:
                     break
             else:
                 patient = 0
@@ -290,32 +284,32 @@ def finetune(tokenizer, device):
     dataset = load_dataset(df, labels)
     eval_dataset = load_dataset(eval_df, eval_labels)
     
-    batch_size = 32
+    batch_size = args.batch_size
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     eval_dataloader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
     
     # Load model
-    epochs = 10
+    epochs = args.finetune_epochs
     model = modeling.Model(
-        vocab_size=30000,
-        embedding_dim=100,
-        channel=128,
-        num_class=2,
-        dropout1=0.3,
-        dropout2=0.4
+        vocab_size=args.vocab_size,
+        embedding_dim=args.embedding_dim,
+        hidden_size=args.hidden_size,
+        num_class=args.num_classes,
+        dropout1=args.dropout1,
+        dropout2=args.dropout2
     )
     model.load_state_dict(torch.load('./save/meta_pseudo/result_temp.pt'))
     model.to(device)
 
     # Set criterion, optimizer, scheduler
-    criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.5)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    criterion = torch.nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.finetune_learning_rate)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer=optimizer,
         epochs = epochs,
-        max_lr=0.01,
+        max_lr=args.finetune_max_lr,
         steps_per_epoch=len(dataloader),
-        pct_start=0.1,
+        pct_start=args.finetune_pct_start,
     )
     
     for epoch in range(epochs):
@@ -355,13 +349,41 @@ def finetune(tokenizer, device):
 
 
 if __name__ == "__main__":
-    # device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f'device = {device}')
+    parser = argparse.ArgumentParser(description='Meta Pseudo Labeling(Reference : https://github.com/kekmodel/MPL-pytorch)')
+    parser.add_argument('--dropout1', default=0.3, type=float, help='dropout embedding layer, linear layer')
+    parser.add_argument('--dropout2', default=0.4, type=float, help='dropout conv layer')
+    parser.add_argument('--teacher_learning_rate', default=1e-7, type=float, help='mpl teacher learning rate')
+    parser.add_argument('--student_learning_rate', default=1e-7, type=float, help='mpl student learning rate')
+    parser.add_argument('--label_smoothing', default=0, type=float, help='mpl traning label smoothing')
+    parser.add_argument('--embedding_dim', default=100, type=int, help='model embedding dimension')
+    parser.add_argument('--hidden_size', default=128, type=int, help='model hidden size')
+    parser.add_argument('--num_classes', default=2, type=int, help='number of classification')
 
-    # load tokenizer
-    tokenizer = BertWordPieceTokenizer('./vocab_3.txt', lowercase=False)
+    parser.add_argument('--epochs', default=1, type=int, help='mpl trainig epochs')
+    parser.add_argument('--seed', default=42, type=int, help='random seed')
+    parser.add_argument('--vocab_size', default=30000, type=int, help='tokenizer vocab size')
+    parser.add_argument('--batch_size', default=32, type=int, help='mpl training batch size')
+    parser.add_argument('--unlabeled_sample_frac', default=0.025, type=float, help='unlabeled dataset sample ratio')
+    parser.add_argument('--temperature', default=0.9, type=float, help='pseudo label temperature')
+    parser.add_argument('--uda_lambda', default=1.0, type=float, help='pseudo label weight lambda')
+    parser.add_argument('--uda_step', default=1.0, type=float, help='pseudo label uda step')
+    parser.add_argument('--threshold', default=0.6, type=float, help='pseudo label threshold')
+    parser.add_argument('--patient', default=20, type=int, help='mpl early stopping patient')
+
+    parser.add_argument('--finetune_learning_rate', defulat=0.001, type=float, help='finetuning learning rate')
+    parser.add_argument('--finetune_epochs', defulat=10, type=int, help='finetuning epochs')
+    parser.add_argument('--finetune_max_lr', defulat=0.01, type=float, help='finetuning OneCyclelr scheduler max_lr')
+    parser.add_argument('--finetune_pct_start', defulat=0.1, type=float, help='finetuning OncCyclelr scheduler pct_start')
+
+    args = parser.parse_args()
+
+    # # device
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # print(f'device = {device}')
+
+    # # load tokenizer
+    # tokenizer = BertWordPieceTokenizer('./vocab.txt', lowercase=False)
     
-    # MPL 수행 후 labeled data에 대해 finetuning을 시도합니다
-    train(tokenizer, device)
-    finetune(tokenizer, device)
+    # # MPL 수행 후 labeled data에 대해 finetuning을 시도합니다
+    # train(args, tokenizer, device)
+    # finetune(args, tokenizer, device)
