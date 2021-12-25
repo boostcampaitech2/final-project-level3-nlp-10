@@ -30,6 +30,65 @@
 본 프로젝트는 인공지능을 기반으로 만들어졌기 때문에 검열 목록에 없더라도 혐오표현으로 분류되면 검열이 가능합니다. </br>
 또한, 오인 제재와 관대한 방송인 문제를 극복하기 위해 저희는 인공지능이 직접적으로 제재를 하기 보다는, 제재를 할 수 있도록 정보를 제공하는 형태로 제작하였습니다. </br>
 
+## Trainig
+학습을 하기 위해 아래와 같은 arguments들을 정해서 학습시킬 수 있습니다.  
+Meta Pseudo Labels이라는 학습 방법을 사용했으며 [링크](https://github.com/kekmodel/MPL-pytorch)에 있는 코드를 사용하여 적용했습니다.  
+또한, MLflow를 설정하여 fine-tuning한 모델 중 가장 좋은 F1을 보인 모델을 서버에 저장할 수 있습니다.
 
+```
+python train.py --dropout1 dropout1 \
+                 --dropout2 dropout2 \
+                 --teacher_learning_rate teacher_learning_rate \  
+                 --student_learning_rate student_learning_rate \
+                 --label_smoothing label_smoothing \
+                 --embeeding_dim embedding_dim \
+                 --hidden_size hidden_size \
+                 --num_classes num_classes \
+                 --epochs epochs \
+                 --seed seed \
+                 --vocab_size vocab_size \
+                 --batch_size batch_size \
+                 --unlabeled_sample_frac unlabeled_sample_frac \
+                 --temperature temperature \
+                 --uda_lambda uda_lambda \
+                 --uda_step uda_step \
+                 --threshold threshold \
+                 --patient patient \
+                 --finetune_learning_rate finetune_learning_rate \
+                 --finetune_epochs finetune_epochs \
+                 --finetune_max_lr finetune_max_lr \
+                 --finetune_pct_start finetune_pct_start
+```
 
+## Benchmark
+### Models
+labeled된 데이터의 20%를 테스트 데이터로 사용하고 10 epochs로 학습했을 때의 성능비교입니다.
 
+|Model|Best Acc|Best F1|Inference time(128 batch, CPU)|
+|-|-|-|-|
+|Rule based|0.81|0.690|**0.01s**(1300 words)|
+|CNN|0.90|0.878|0.03s|
+|BiLSTM|**0.93**|0.90|0.28s|
+|CNN + BiLSTM|0.92|**0.911**|0.3s|
+
+### Parameters
+|Model|Params|
+|-|-|
+|CNN + BiLSTM|**3390786**|
+|MobileBERT-base|24582914|
+|BERT-base|110618882|
+
+### Training
+labeled된 트위치 채팅 데이터를 테스트 데이터로 사용했습니다.  
+
+|Training|Best Acc|Best F1|
+|-|-|-|
+|Only labeled|0.76|0.742|
+|Pseudo labeling|0.75|0.728|
+|MPL -> Fine-tuning|**0.79**|**0.757**|
+
+* pseudo labeling 방법은 학습하려고 하는 모델에 unlabeled 데이터를 넣어 생성된 pseudo label을 다시 학습하는 방법으로 진행했습니다.  
+
+## Reference
+- [Meta Pseudo Labels](https://arxiv.org/abs/2003.10580)
+- 

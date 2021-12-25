@@ -2,6 +2,7 @@
     Meta Pseudo Labeling이 구현된 코드입니다.
     Reference: https://github.com/kekmodel/MPL-pytorch
 """
+import os
 import gc
 import math
 import random
@@ -22,6 +23,10 @@ import modeling
 from utils import Config, set_seed
 from data import load_dataset, punctuation, punctuation2, tokenized_dataset
 from tqdm import trange, tqdm
+
+import mlflow
+os.environ['GOOGLE_APPLICATION_CREDENTIALS']=GOOGLE_APPLICATION_CREDENTIAL
+os.environ['MLFLOW_TRACKING_URI']=MLFLOW_TRACKING_URI
 
 set_seed(42)
 
@@ -63,6 +68,7 @@ def train(args, tokenizer, device) -> None:
     
     # Print Hyperparameters
     print(f'config : {config.__dict__}')
+    mlflow.log_params(config.__dict__)
 
     # Train Dataset
     df = pd.read_csv('labeled.csv')
@@ -312,6 +318,7 @@ def finetune(tokenizer, device):
         pct_start=args.finetune_pct_start,
     )
     
+    best_f1 = 0
     for epoch in range(epochs):
         running_loss = 0
         model.train()
@@ -346,6 +353,17 @@ def finetune(tokenizer, device):
             f1 = f1_score(eval_labels, prediction, average='macro')
 
         print(f'Epoch: {epoch+1} | Train Loss : {running_loss/len(dataloader):.5f} | Acc : {eval_acc:.5f} | F1 : {f1:.3f}')
+        mlflow.log_metric('train loss', running_loss/len(dataloader))
+        mlflow.log_metric('eval acc', eval_acc)
+        mlflow.log_metric('eval f1', f1)
+
+        if f1 > best_f1:
+            torch.save(model.state_dict(), f'./save/temp/result_{f1:.3f}.pt')
+            best_model = model.state_dict()
+            best_f1 = f1
+    
+    # mlflow tracking model
+    mlflow.pytorch.log_model(best_model, 'model', registered_model_name="ToxicityText")
 
 
 if __name__ == "__main__":
