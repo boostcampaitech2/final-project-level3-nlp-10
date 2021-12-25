@@ -32,12 +32,13 @@
 
 ## Trainig
 학습을 하기 위해 아래와 같은 arguments들을 정해서 학습시킬 수 있습니다.  
-Meta Pseudo Label이라는 학습 방법을 사용했으며 [링크](https://github.com/kekmodel/MPL-pytorch)에 있는 코드를 사용하여 적용했습니다.  
+Meta Pseudo Labels이라는 학습 방법을 사용했으며 [링크](https://github.com/kekmodel/MPL-pytorch)에 있는 코드를 사용하여 적용했습니다.  
 또한, MLflow를 설정하여 fine-tuning한 모델 중 가장 좋은 F1을 보인 모델을 서버에 저장할 수 있습니다.
 
-`python train.py --dropout1 dropout1 \
+```
+python train.py --dropout1 dropout1 \
                  --dropout2 dropout2 \
-                 --teacher_learning_rate teacher_learning_rate \
+                 --teacher_learning_rate teacher_learning_rate \  
                  --student_learning_rate student_learning_rate \
                  --label_smoothing label_smoothing \
                  --embeeding_dim embedding_dim \
@@ -57,13 +58,14 @@ Meta Pseudo Label이라는 학습 방법을 사용했으며 [링크](https://git
                  --finetune_epochs finetune_epochs \
                  --finetune_max_lr finetune_max_lr \
                  --finetune_pct_start finetune_pct_start
-`
+```
 
 ## Benchmark
 ### Models
 labeled된 데이터의 20%를 테스트 데이터로 사용하고 10 epochs로 학습했을 때의 성능비교입니다.
 
 |Model|Best Acc|Best F1|Inference time(128 batch, CPU)|
+|-|-|-|-|
 |Rule based|0.81|0.690|**0.01s**(1300 words)|
 |CNN|0.90|0.878|0.03s|
 |BiLSTM|**0.93**|0.90|0.28s|
@@ -71,16 +73,22 @@ labeled된 데이터의 20%를 테스트 데이터로 사용하고 10 epochs로 
 
 ### Parameters
 |Model|Params|
+|-|-|
 |CNN + BiLSTM|**3390786**|
 |MobileBERT-base|24582914|
 |BERT-base|110618882|
 
 ### Training
-labeled된 트위치 채팅 데이터를 테스트 데이터로 사용했습니다.
+labeled된 트위치 채팅 데이터를 테스트 데이터로 사용했습니다.  
+
 |Training|Best Acc|Best F1|
+|-|-|-|
 |Only labeled|0.76|0.742|
 |Pseudo labeling|0.75|0.728|
 |MPL -> Fine-tuning|**0.79**|**0.757**|
 
 * pseudo labeling 방법은 학습하려고 하는 모델에 unlabeled 데이터를 넣어 생성된 pseudo label을 다시 학습하는 방법으로 진행했습니다.  
 
+## Reference
+- [Meta Pseudo Labels](https://arxiv.org/abs/2003.10580)
+- 
