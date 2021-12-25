@@ -18,13 +18,10 @@ from transformers import ElectraForSequenceClassification
 from tokenizers import BertWordPieceTokenizer
 
 import modeling
-from utils import Config, set_seed, GOOGLE_APPLICATION_CREDENTIAL, MLFLOW_TRACKING_URI
+from utils import Config, set_seed
 from data import load_dataset, punctuation, punctuation2, tokenized_dataset
 from tqdm import trange, tqdm
 
-# MLFlow 추적을 위한 설정
-os.environ['GOOGLE_APPLICATION_CREDENTIALS']=GOOGLE_APPLICATION_CREDENTIAL
-os.environ['MLFLOW_TRACKING_URI']=MLFLOW_TRACKING_URI
 
 set_seed(42)
 
@@ -68,7 +65,6 @@ def get_cosine_schedule_with_warmup(optimizer,
 def train(tokenizer, device) -> None:
     # Print Hyperparameters
     print(f'config : {config.__dict__}')
-    # mlflow.log_params(config.__dict__)
 
     # Train Dataset
     df = pd.read_csv('labeled.csv')
