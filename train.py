@@ -20,7 +20,7 @@ from transformers import ElectraForSequenceClassification
 from tokenizers import BertWordPieceTokenizer
 
 import modeling
-from utils import Config, set_seed
+from utils import Config, set_seed, GOOGLE_APPLICATION_CREDENTIAL, MLFLOW_TRACKING_URI
 from data import load_dataset, punctuation, punctuation2, tokenized_dataset
 from tqdm import trange, tqdm
 
