@@ -30,7 +30,32 @@
 본 프로젝트는 인공지능을 기반으로 만들어졌기 때문에 검열 목록에 없더라도 혐오표현으로 분류되면 검열이 가능합니다. </br>
 또한, 오인 제재와 관대한 방송인 문제를 극복하기 위해 저희는 인공지능이 직접적으로 제재를 하기 보다는, 제재를 할 수 있도록 정보를 제공하는 형태로 제작하였습니다. </br>
 
-## Trainig
+## Data Labeling
+
+### 사용한 데이터셋 목록
+
+- 욕설 감지 데이터셋 ([Curse-detection-data](https://github.com/2runo/Curse-detection-data))
+- BEEP! Korean Corpus of Online News Comments for Toxic Speech Detection ([Korean Hate Speech Dataset](https://github.com/kocohub/korean-hate-speech))
+- 트위치 라이브 스트리밍 채팅 데이터 로그 (crawled with [Chatty](https://chatty.github.io/))
+
+트위치 채팅 데이터는 Chatty를 이용해 수집하였습니다. </br>
+전처리 코드와 raw data는 ElectraBERT-base/data/twitch 폴더 안에서 확인할 수 있습니다.
+
+### 데이터 라벨링 기준
+
+데이터 라벨링의 기준(혐오표현의 기준)을 세우는 데에 고려한 사항들은 다음과 같습니다.
+- 욕설 표현이 들어가 있는 경우 혐오표현으로 분류 </br>
+  (씨X, 병X, 개새X, 새X 등)
+- 단어 자체는 욕설이라 보기 힘들지만 문장 안에서 욕설이라고 표현될 수 있는 경우 혐오표현으로 분류
+- 현재 단어가 단순 강조의 의미이거나 유행어로 사용된다 하더라도, 본 뜻이 충분히 욕설일 경우 혐오표현으로 분류 </br>
+  (존X, 개같이, 씹 등)
+- 성적인/음란한 표현들도 혐오표현으로 분류 </br>
+  (섹X, 따먹는다, 꼴린다, 아다 등)
+- 채팅창의 물을 흐린다고 할 수 있을만큼 공격적인 표현은 혐오표현으로 분류
+- 정도가 매우 심한 지역/성별/인종 차별 발언도 혐오표현으로 분류
+
+## Training
+
 학습을 하기 위해 아래와 같은 arguments들을 정해서 학습시킬 수 있습니다.  
 Meta Pseudo Labels이라는 학습 방법을 사용했으며 [링크](https://github.com/kekmodel/MPL-pytorch)에 있는 코드를 사용하여 적용했습니다.  
 또한, MLflow를 설정하여 fine-tuning한 모델 중 가장 좋은 F1을 보인 모델을 서버에 저장할 수 있습니다.
