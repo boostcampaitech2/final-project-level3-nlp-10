@@ -61,28 +61,28 @@ Meta Pseudo Labels이라는 학습 방법을 사용했으며 [링크](https://gi
 또한, MLflow를 설정하여 fine-tuning한 모델 중 가장 좋은 F1을 보인 모델을 서버에 저장할 수 있습니다.
 
 ```
-python train.py --dropout1 dropout1 \
-                 --dropout2 dropout2 \
-                 --teacher_learning_rate teacher_learning_rate \  
-                 --student_learning_rate student_learning_rate \
-                 --label_smoothing label_smoothing \
-                 --embeeding_dim embedding_dim \
-                 --hidden_size hidden_size \
-                 --num_classes num_classes \
-                 --epochs epochs \
-                 --seed seed \
-                 --vocab_size vocab_size \
-                 --batch_size batch_size \
-                 --unlabeled_sample_frac unlabeled_sample_frac \
-                 --temperature temperature \
-                 --uda_lambda uda_lambda \
-                 --uda_step uda_step \
-                 --threshold threshold \
-                 --patient patient \
-                 --finetune_learning_rate finetune_learning_rate \
-                 --finetune_epochs finetune_epochs \
-                 --finetune_max_lr finetune_max_lr \
-                 --finetune_pct_start finetune_pct_start
+python train.py --dropout1 0.3 \
+                --dropout2 0.4 \
+                --teacher_learning_rate 1e-7 \  
+                --student_learning_rate 1e-7 \
+                --label_smoothing 0 \
+                --embeeding_dim 100 \
+                --hidden_size 128 \
+                --num_classes 2 \
+                --epochs 1 \
+                --seed 42 \
+                --vocab_size 30000 \
+                --batch_size 32 \
+                --unlabeled_sample_frac 0.025 \
+                --temperature 0 \
+                --uda_lambda 1 \
+                --uda_step 1 \
+                --threshold 0.7 \
+                --patient 20 \
+                --finetune_learning_rate 1e-3 \
+                --finetune_epochs 10 \
+                --finetune_max_lr 0.01 \
+                --finetune_pct_start 0.1
 ```
 
 ## Benchmark
