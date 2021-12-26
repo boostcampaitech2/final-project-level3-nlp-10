@@ -100,7 +100,7 @@ labeled된 데이터의 20%를 테스트 데이터로 사용하고 10 epochs로 
 |Model|Params|
 |-|-|
 |CNN + BiLSTM|**3390786**|
-|MobileBERT-base|24582914|
+|MobileBERT-uncased|24582914|
 |BERT-base|110618882|
 
 ### Training
