@@ -78,7 +78,7 @@ def train(args, tokenizer, device) -> None:
     # pseudo labeling할 데이터 중 2.8만개를 샘플로 사용합니다.
     true_label = p_df[(p_df['none']<p_df['curse'])==True]
     false_label = p_df.drop(true_label.index, axis=0).reset_index().drop(['index'], axis=1)
-    false_label = false_label.sample(frac=0.025, random_state=42)
+    false_label = false_label.sample(frac=args.unlabeled_sample_frac, random_state=args.seed)
     true_label = true_label.sample(frac=0.25)
     true_label = true_label.append(false_label)
     true_label = true_label.sample(frac=1, random_state=42).reset_index().drop(['index'], axis=1)
